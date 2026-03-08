@@ -1,0 +1,50 @@
+services:
+  browser-node:
+    build:
+      context: ./browser-node
+    shm_size: 2gb
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:6080/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    environment:
+      BROWSER_WIDTH: ${BROWSER_WIDTH:-1600}
+      BROWSER_HEIGHT: ${BROWSER_HEIGHT:-900}
+      BROWSER_URL: ${BROWSER_URL:-about:blank}
+      BROWSER_WS_ENDPOINT_FILE: /data/profile/browser-ws-endpoint.txt
+    volumes:
+      - ./data/browser-profile:/data/profile
+      - ./data/downloads:/data/downloads
+    ports:
+      - "127.0.0.1:${NOVNC_PORT:-6080}:6080"
+      - "127.0.0.1:${VNC_PORT:-5900}:5900"
+
+  controller:
+    build:
+      context: ./controller
+    depends_on:
+      browser-node:
+        condition: service_healthy
+    environment:
+      BROWSER_CDP_ENDPOINT: http://browser-node:9223
+      BROWSER_CDP_WS_ENDPOINT_FILE: /data/browser-profile/browser-ws-endpoint.txt
+      TAKEOVER_URL: ${TAKEOVER_URL:-http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale}
+      ARTIFACT_ROOT: /data/artifacts
+      UPLOAD_ROOT: /data/uploads
+      AUTH_ROOT: /data/auth
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-example.com}
+      DEFAULT_VIEWPORT_WIDTH: ${BROWSER_WIDTH:-1600}
+      DEFAULT_VIEWPORT_HEIGHT: ${BROWSER_HEIGHT:-900}
+      MAX_SESSIONS: ${MAX_SESSIONS:-1}
+      REQUIRE_APPROVAL_FOR_UPLOADS: ${REQUIRE_APPROVAL_FOR_UPLOADS:-true}
+      ENABLE_TRACING: ${ENABLE_TRACING:-true}
+      TYPING_DELAY_MS: ${TYPING_DELAY_MS:-20}
+      ACTION_TIMEOUT_MS: ${ACTION_TIMEOUT_MS:-15000}
+      CONNECT_RETRIES: ${CONNECT_RETRIES:-60}
+      CONNECT_RETRY_DELAY_SECONDS: ${CONNECT_RETRY_DELAY_SECONDS:-1}
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"

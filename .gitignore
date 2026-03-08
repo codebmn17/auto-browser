@@ -1,0 +1,13 @@
+.env
+data/artifacts/*
+!data/artifacts/.gitkeep
+data/uploads/*
+!data/uploads/.gitkeep
+data/auth/*
+!data/auth/.gitkeep
+data/browser-profile/*
+!data/browser-profile/.gitkeep
+data/downloads/*
+!data/downloads/.gitkeep
+__pycache__/
+*.pyc
