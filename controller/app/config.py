@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     auth_root: str = Field("/data/auth", alias="AUTH_ROOT")
     approval_root: str = Field("/data/approvals", alias="APPROVAL_ROOT")
     audit_root: str = Field("/data/audit", alias="AUDIT_ROOT")
+    state_db_path: str | None = Field(None, alias="STATE_DB_PATH")
+    audit_max_events: int = Field(10000, alias="AUDIT_MAX_EVENTS")
     session_store_root: str = Field("/data/sessions", alias="SESSION_STORE_ROOT")
     job_store_root: str = Field("/data/jobs", alias="JOB_STORE_ROOT")
     redis_url: str | None = Field(None, alias="REDIS_URL")

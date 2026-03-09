@@ -41,6 +41,8 @@ services:
       AUTH_ROOT: /data/auth
       APPROVAL_ROOT: /data/approvals
       AUDIT_ROOT: /data/audit
+      STATE_DB_PATH: ${STATE_DB_PATH:-}
+      AUDIT_MAX_EVENTS: ${AUDIT_MAX_EVENTS:-10000}
       JOB_STORE_ROOT: /data/jobs
       SESSION_STORE_ROOT: /data/sessions
       REDIS_URL: ${REDIS_URL:-}

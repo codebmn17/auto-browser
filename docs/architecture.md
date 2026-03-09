@@ -159,6 +159,7 @@ The controller owns:
 - durable background job execution for queued agent step/run requests
 - audit events with operator identity tagging
 - an MCP-shaped browser tool gateway over HTTP
+- optional SQLite backing for approvals and audit retention
 
 ### Why the controller should be the only thing LLMs talk to
 
@@ -232,6 +233,7 @@ That is the minimal reliable operator loop.
 - encrypted auth-state support
 - audit log at `/data/audit/events.jsonl`
 - MCP-shaped `/mcp/tools` + `/mcp/tools/call` surface
+- optional SQLite state DB for approvals + audit queries/retention
 
 ### Phase 2 — private remote access
 - put the stack behind Tailscale or Cloudflare Access

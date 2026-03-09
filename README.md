@@ -14,6 +14,7 @@ This scaffold gives you:
 - **durable session metadata** under `/data/sessions`, with optional Redis backing
 - **durable agent job records** under `/data/jobs` with background workers for queued step/run requests
 - **audit events** with per-request operator identity headers
+- optional **SQLite backing** for approvals + audit events
 - provider adapters for **OpenAI, Claude, and Gemini** behind one internal action schema
 - one-step and multi-step **agent orchestration endpoints**
 - a browser-node managed **Playwright server endpoint** so the controller connects over Playwright protocol instead of CDP
@@ -330,6 +331,8 @@ curl -s 'http://localhost:8000/audit/events?session_id=<session-id>' | jq
 
 Audit events are written to `/data/audit/events.jsonl`.
 
+If `STATE_DB_PATH` is set, approvals and audit events are also stored in SQLite and served from there. `AUDIT_MAX_EVENTS` caps retained audit rows/events in both SQLite and the mirrored JSONL file.
+
 ### MCP-shaped browser gateway
 
 ```bash
@@ -411,6 +414,8 @@ Optional durable session-store knobs:
 
 Optional auth/audit/operator knobs:
 - `AUDIT_ROOT`
+- `STATE_DB_PATH`
+- `AUDIT_MAX_EVENTS`
 - `AUTH_STATE_ENCRYPTION_KEY`
 - `REQUIRE_AUTH_STATE_ENCRYPTION`
 - `AUTH_STATE_MAX_AGE_HOURS`

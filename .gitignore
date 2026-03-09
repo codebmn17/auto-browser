@@ -9,6 +9,8 @@ data/approvals/*
 !data/approvals/.gitkeep
 data/audit/*
 !data/audit/.gitkeep
+data/db/*
+!data/db/.gitkeep
 data/jobs/*
 !data/jobs/.gitkeep
 data/sessions/*

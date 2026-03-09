@@ -190,9 +190,15 @@ class BrowserManager:
         Path(self.settings.auth_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.approval_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.audit_root).mkdir(parents=True, exist_ok=True)
+        if self.settings.state_db_path:
+            Path(self.settings.state_db_path).resolve().parent.mkdir(parents=True, exist_ok=True)
         Path(self.settings.session_store_root).mkdir(parents=True, exist_ok=True)
-        self.approvals = ApprovalStore(self.settings.approval_root)
-        self.audit = AuditStore(self.settings.audit_root)
+        self.approvals = ApprovalStore(self.settings.approval_root, db_path=self.settings.state_db_path)
+        self.audit = AuditStore(
+            self.settings.audit_root,
+            db_path=self.settings.state_db_path,
+            max_events=self.settings.audit_max_events,
+        )
         self.session_store = DurableSessionStore(
             file_root=self.settings.session_store_root,
             redis_url=self.settings.redis_url,
@@ -299,6 +305,7 @@ class BrowserManager:
 
     async def startup(self) -> None:
         logger.info("starting browser manager")
+        await self.approvals.startup()
         await self.audit.startup()
         await self.session_store.startup()
         await self.session_store.mark_all_active_interrupted()

@@ -47,3 +47,28 @@ class AuditStoreTests(unittest.IsolatedAsyncioTestCase):
             operator_events = await store.list(limit=10, operator_id="operator-1")
             self.assertEqual(len(operator_events), 1)
             self.assertEqual(operator_events[0].operator.name, "Alice")
+
+    async def test_sqlite_store_enforces_retention(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir) / "audit"
+            db_path = Path(tempdir) / "db" / "operator.db"
+            store = AuditStore(root, db_path=str(db_path), max_events=2)
+            await store.startup()
+
+            for index in range(3):
+                token = set_current_operator(f"operator-{index}")
+                try:
+                    await store.append(
+                        event_type="browser_action",
+                        status="ok",
+                        action="click",
+                        session_id=f"session-{index}",
+                    )
+                finally:
+                    reset_current_operator(token)
+
+            events = await store.list(limit=10)
+            self.assertEqual(len(events), 2)
+            self.assertEqual(events[0].session_id, "session-2")
+            self.assertEqual(events[-1].session_id, "session-1")
+            self.assertTrue(db_path.exists())

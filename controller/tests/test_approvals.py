@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+from app.approvals import ApprovalStore
 from app.approvals import ApprovalRequiredError
 from app.browser_manager import BrowserManager, BrowserSession
 from app.config import Settings
@@ -112,3 +113,35 @@ class ApprovalQueueTests(unittest.IsolatedAsyncioTestCase):
             x=None,
             y=None,
         )
+
+
+class ApprovalStoreSQLiteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sqlite_store_persists_and_filters_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir) / "approvals"
+            db_path = Path(tempdir) / "db" / "operator.db"
+            store = ApprovalStore(root, db_path=str(db_path))
+            await store.startup()
+
+            action = BrowserActionDecision(
+                action="click",
+                reason="Submit payment",
+                element_id="op-pay",
+                risk_category="payment",
+            )
+            approval = await store.create_or_reuse_pending(
+                session_id="session-1",
+                kind="payment",
+                reason="Payment requires approval",
+                action=action,
+                observation={"url": "https://example.com"},
+            )
+            await store.approve(approval.id, comment="approved")
+
+            loaded = await store.get(approval.id)
+            self.assertEqual(loaded.status, "approved")
+
+            approved = await store.list(status="approved")
+            self.assertEqual(len(approved), 1)
+            self.assertEqual(approved[0].id, approval.id)
+            self.assertTrue(db_path.exists())
