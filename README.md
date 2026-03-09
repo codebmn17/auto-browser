@@ -6,6 +6,7 @@ This scaffold gives you:
 - a **browser node** with Chromium, Xvfb, x11vnc, and noVNC
 - a **controller API** built on FastAPI + Playwright
 - **screen-aware observations** with screenshots and interactable element IDs
+- optional **OCR excerpts** from screenshots via Tesseract
 - **human takeover** through noVNC
 - **artifact capture** for screenshots, traces, and storage state
 - optional **encrypted auth-state storage** with max-age enforcement on restore
@@ -168,6 +169,7 @@ The response includes:
 - a page-level `text_excerpt`
 - a compact `dom_outline` with headings, forms, and element counts
 - an `accessibility_outline` distilled from Playwright’s accessibility tree
+- an `ocr` payload with screenshot text excerpts and bounding boxes
 - a screenshot path and artifact URL
 - interactable elements with observation-scoped `element_id` values
 - recent console errors
@@ -412,6 +414,10 @@ Optional auth/audit/operator knobs:
 - `AUTH_STATE_ENCRYPTION_KEY`
 - `REQUIRE_AUTH_STATE_ENCRYPTION`
 - `AUTH_STATE_MAX_AGE_HOURS`
+- `OCR_ENABLED`
+- `OCR_LANGUAGE`
+- `OCR_MAX_BLOCKS`
+- `OCR_TEXT_LIMIT`
 - `OPERATOR_ID_HEADER`
 - `OPERATOR_NAME_HEADER`
 - `REQUIRE_OPERATOR_ID`

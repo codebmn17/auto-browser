@@ -167,6 +167,7 @@ class BaseProviderAdapter(ABC):
             "text_excerpt": observation.get("text_excerpt"),
             "dom_outline": observation.get("dom_outline"),
             "accessibility_outline": observation.get("accessibility_outline"),
+            "ocr": observation.get("ocr"),
             "interactables": interactables,
             "console_messages": observation.get("console_messages", []),
             "page_errors": observation.get("page_errors", []),

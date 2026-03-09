@@ -18,6 +18,7 @@ from .approvals import ApprovalRequiredError, ApprovalStore
 from .auth_state import AuthStateManager
 from .config import Settings
 from .models import ApprovalKind, BrowserActionDecision, SessionRecord, SessionStatus
+from .ocr import OCRExtractor
 from .session_store import DurableSessionStore
 
 logger = logging.getLogger(__name__)
@@ -201,6 +202,12 @@ class BrowserManager:
             encryption_key=self.settings.auth_state_encryption_key,
             require_encryption=self.settings.require_auth_state_encryption,
             max_age_hours=self.settings.auth_state_max_age_hours,
+        )
+        self.ocr = OCRExtractor(
+            enabled=self.settings.ocr_enabled,
+            language=self.settings.ocr_language,
+            max_blocks=self.settings.ocr_max_blocks,
+            text_limit=self.settings.ocr_text_limit,
         )
 
     def get_remote_access_info(self) -> dict[str, Any]:
@@ -930,6 +937,7 @@ class BrowserManager:
         interactables = await session.page.evaluate(INTERACTABLES_SCRIPT, limit)
         screenshot = await self._capture_screenshot(session, screenshot_label)
         summary = await self._page_summary(session.page)
+        ocr = await self.ocr.extract_from_image(screenshot["path"])
         return {
             "session": await self._session_summary(session),
             "url": session.page.url,
@@ -938,6 +946,7 @@ class BrowserManager:
             "text_excerpt": summary["text_excerpt"],
             "dom_outline": summary["dom_outline"],
             "accessibility_outline": summary["accessibility_outline"],
+            "ocr": ocr,
             "interactables": interactables,
             "screenshot_path": screenshot["path"],
             "screenshot_url": screenshot["url"],

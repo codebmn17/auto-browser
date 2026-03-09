@@ -19,6 +19,11 @@ class ProviderObservationTests(unittest.TestCase):
                 "focused": {"role": "link", "name": "More information"},
                 "nodes": [{"role": "heading", "name": "Example Domain"}],
             },
+            "ocr": {
+                "available": True,
+                "text_excerpt": "Example Domain Learn more",
+                "blocks": [{"text": "Example", "confidence": 98.0}],
+            },
             "interactables": [
                 {
                     "element_id": "op-1",
@@ -44,4 +49,5 @@ class ProviderObservationTests(unittest.TestCase):
         self.assertEqual(compact["text_excerpt"], "Example Domain Learn more")
         self.assertIn("headings", compact["dom_outline"])
         self.assertTrue(compact["accessibility_outline"]["available"])
+        self.assertTrue(compact["ocr"]["available"])
         self.assertNotIn("ignored", compact["interactables"][0])
