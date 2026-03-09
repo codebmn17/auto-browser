@@ -129,7 +129,8 @@ This repo now also includes an optional `docker_ephemeral` session mode:
 - the controller provisions a fresh browser-node container per session
 - each isolated session gets its own Playwright endpoint
 - each isolated session gets its own published noVNC/VNC port pair
-- the shared reverse-SSH metadata is not reused for those takeover URLs
+- session summaries/observations now expose session-specific `remote_access` state so operators can see whether an isolated takeover URL is local-only or remotely reachable
+- the shared reverse-SSH metadata is not blindly reused for those takeover URLs
 
 That is the first real path toward true per-account browser isolation without rewriting the controller contract.
 

@@ -151,8 +151,14 @@ async def get_agent_job(job_id: str) -> dict:
 
 
 @app.get("/remote-access")
-async def get_remote_access() -> dict:
-    return manager.get_remote_access_info()
+async def get_remote_access(session_id: str | None = None) -> dict:
+    if session_id and session_id not in manager.sessions:
+        try:
+            record = await manager.get_session_record(session_id)
+            return record["remote_access"]
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+    return manager.get_remote_access_info(session_id)
 
 
 @app.get("/audit/events")

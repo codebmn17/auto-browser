@@ -75,6 +75,7 @@ docker compose -f docker-compose.yml -f docker-compose.isolation.yml up --build
 
 That keeps the default shared browser-node available, but new sessions are provisioned as one-off browser containers with their own noVNC ports when `SESSION_ISOLATION_MODE=docker_ephemeral`.
 Raise `MAX_SESSIONS` above `1` if you want multiple isolated sessions live at once.
+The existing reverse-SSH sidecar still only tunnels the controller API plus the shared browser-node noVNC port. Isolated session noVNC ports are separate host ports, so set `ISOLATED_TAKEOVER_HOST` to a host humans can actually reach if you want remote takeover on isolated sessions.
 
 For remote access, you now have two sane paths:
 - put the stack behind **Tailscale / Cloudflare Access**
@@ -158,6 +159,7 @@ It verifies:
 - controller readiness with the isolation override enabled
 - session create in `docker_ephemeral` mode
 - dedicated per-session noVNC port wiring
+- session-scoped `remote_access` metadata
 - observe + close flow
 - isolated browser container cleanup after close
 
@@ -171,9 +173,11 @@ curl -s http://localhost:8000/agent/providers | jq
 
 ```bash
 curl -s http://localhost:8000/remote-access | jq
+curl -s 'http://localhost:8000/remote-access?session_id=<session-id>' | jq
 ```
 
 If the reverse-SSH sidecar is running, observations and session summaries will automatically return the forwarded `takeover_url` from `data/tunnels/reverse-ssh.json`.
+For isolated sessions, the `remote_access` payload becomes session-specific so you can see whether that session’s own noVNC URL is still local-only or actually reachable remotely.
 
 ### Create a session
 

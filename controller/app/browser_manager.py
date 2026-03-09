@@ -223,7 +223,14 @@ class BrowserManager:
         )
         self.runtime_provisioner = DockerBrowserNodeProvisioner(self.settings)
 
-    def get_remote_access_info(self) -> dict[str, Any]:
+    def get_remote_access_info(self, session_id: str | None = None) -> dict[str, Any]:
+        if session_id:
+            session = self.sessions.get(session_id)
+            if session is not None:
+                return self._session_remote_access_info(session)
+        return self._global_remote_access_info()
+
+    def _global_remote_access_info(self) -> dict[str, Any]:
         info_path = Path(self.settings.remote_access_info_path)
         payload: dict[str, Any] = {
             "active": False,
@@ -290,10 +297,50 @@ class BrowserManager:
         )
         return payload
 
+    def _session_remote_access_info(self, session: BrowserSession) -> dict[str, Any]:
+        if session.isolation_mode != "docker_ephemeral":
+            return self._global_remote_access_info()
+
+        payload = dict(self._global_remote_access_info())
+        takeover_url = session.takeover_url
+        takeover_local_only = self._takeover_url_is_local_only(takeover_url)
+        api_url = payload.get("api_url")
+        payload.update(
+            {
+                "session_id": session.id,
+                "source": "isolated_runtime",
+                "configured_takeover_url": takeover_url,
+                "takeover_url": takeover_url,
+                "local_only": takeover_local_only,
+                "requires_direct_host_access": True,
+                "shared_api_url": api_url,
+                "shared_tunnel_active": bool(api_url),
+            }
+        )
+        if session.runtime is not None:
+            payload["runtime"] = {
+                "container_name": session.runtime.container_name,
+                "browser_node": session.runtime.browser_node_name,
+                "novnc_port": session.runtime.novnc_port,
+                "vnc_port": session.runtime.vnc_port,
+            }
+        if takeover_local_only:
+            payload["active"] = False
+            payload["status"] = "api_only" if api_url else "local_only"
+            payload["warning"] = (
+                "This isolated takeover URL is still bound to a local host/port. "
+                "Set ISOLATED_TAKEOVER_HOST to a remotely reachable hostname or IP if humans need remote takeover."
+            )
+        else:
+            payload["active"] = True
+            payload["status"] = "active"
+            payload["warning"] = None
+        return payload
+
     def _current_takeover_url(self, session: BrowserSession | None = None) -> str:
         if session is not None and session.isolation_mode == "docker_ephemeral":
             return session.takeover_url
-        remote_access = self.get_remote_access_info()
+        remote_access = self._global_remote_access_info()
         if remote_access.get("active") and remote_access.get("takeover_url"):
             return str(remote_access["takeover_url"])
         if session is not None:
@@ -311,6 +358,11 @@ class BrowserManager:
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=UTC)
         return parsed.astimezone(UTC)
+
+    @staticmethod
+    def _takeover_url_is_local_only(value: str) -> bool:
+        host = (urlparse(value).hostname or "").strip().lower()
+        return host in {"", "127.0.0.1", "localhost", "::1", "0.0.0.0"}
 
     async def startup(self) -> None:
         logger.info("starting browser manager")
@@ -835,8 +887,12 @@ class BrowserManager:
             "session": await self._session_summary(session),
             "reason": reason,
             "takeover_url": self._current_takeover_url(session),
-            "remote_access": self.get_remote_access_info(),
-            "message": "Human takeover requested. Open the noVNC URL to continue visually. In this POC, takeover is global to the single browser desktop.",
+            "remote_access": self._session_remote_access_info(session),
+            "message": (
+                "Human takeover requested. Open the noVNC URL to continue visually."
+                if session.isolation_mode == "docker_ephemeral"
+                else "Human takeover requested. Open the noVNC URL to continue visually. In this POC, takeover is global to the single browser desktop."
+            ),
         }
         await self._append_jsonl(
             session.artifact_dir / "actions.jsonl",
@@ -1037,7 +1093,7 @@ class BrowserManager:
             "page_errors": session.page_errors[-10:],
             "request_failures": session.request_failures[-10:],
             "takeover_url": self._current_takeover_url(session),
-            "remote_access": self.get_remote_access_info(),
+            "remote_access": self._session_remote_access_info(session),
         }
 
     async def _light_snapshot(self, session: BrowserSession, *, label: str) -> dict[str, Any]:
@@ -1263,7 +1319,7 @@ class BrowserManager:
             "title": await session.page.title(),
             "artifact_dir": str(session.artifact_dir),
             "takeover_url": self._current_takeover_url(session),
-            "remote_access": self.get_remote_access_info(),
+            "remote_access": self._session_remote_access_info(session),
             "isolation": self._session_isolation(session),
             "auth_state": self._session_auth_state_info(session),
             "last_action": session.last_action,
@@ -1336,7 +1392,7 @@ class BrowserManager:
             "url": session.page.url,
             "title": await session.page.title(),
             "takeover_url": self._current_takeover_url(session),
-            "remote_access": self.get_remote_access_info(),
+            "remote_access": self._session_remote_access_info(session),
             "isolation": self._session_isolation(session),
             "auth_state": self._session_auth_state_info(session),
             "last_action": session.last_action,

@@ -63,6 +63,10 @@ class ListAgentJobsInput(BaseModel):
     session_id: str | None = None
 
 
+class GetRemoteAccessInput(BaseModel):
+    session_id: str | None = None
+
+
 class AgentJobIdInput(BaseModel):
     job_id: str
 
@@ -196,7 +200,7 @@ class McpToolGateway:
                 ToolSpec(
                     name="browser.get_remote_access",
                     description="Read current remote-access metadata for takeover/API forwarding.",
-                    input_model=EmptyInput,
+                    input_model=GetRemoteAccessInput,
                     handler=self._get_remote_access,
                 ),
             ]
@@ -304,5 +308,8 @@ class McpToolGateway:
     async def _list_providers(self, _: EmptyInput) -> list[dict[str, Any]]:
         return [item.model_dump() for item in self.orchestrator.list_providers()]
 
-    async def _get_remote_access(self, _: EmptyInput) -> dict[str, Any]:
-        return self.manager.get_remote_access_info()
+    async def _get_remote_access(self, payload: GetRemoteAccessInput) -> dict[str, Any]:
+        if payload.session_id and payload.session_id not in self.manager.sessions:
+            record = await self.manager.get_session_record(payload.session_id)
+            return record["remote_access"]
+        return self.manager.get_remote_access_info(payload.session_id)

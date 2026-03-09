@@ -192,10 +192,68 @@ class BrowserIsolationSummaryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(summary["isolation"]["mode"], "docker_ephemeral")
             self.assertFalse(summary["isolation"]["shared_takeover_surface"])
             self.assertFalse(summary["isolation"]["shared_browser_process"])
+            self.assertEqual(summary["remote_access"]["status"], "local_only")
+            self.assertFalse(summary["remote_access"]["active"])
+            self.assertTrue(summary["remote_access"]["local_only"])
             self.assertEqual(
                 summary["isolation"]["runtime"]["container_name"],
                 "browser-session-session-1",
             )
+
+    async def test_isolated_session_remote_access_marks_public_host_as_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            settings = Settings(
+                _env_file=None,
+                ARTIFACT_ROOT=str(root / "artifacts"),
+                UPLOAD_ROOT=str(root / "uploads"),
+                AUTH_ROOT=str(root / "auth"),
+                APPROVAL_ROOT=str(root / "approvals"),
+                SESSION_STORE_ROOT=str(root / "sessions"),
+                REMOTE_ACCESS_INFO_PATH=str(root / "tunnels/reverse-ssh.json"),
+            )
+            manager = BrowserManager(settings)
+            runtime = IsolatedBrowserRuntime(
+                session_id="session-2",
+                container_id="container-2",
+                container_name="browser-session-session-2",
+                network_name="browser-operator-poc_default",
+                browser_node_name="browser-session-session-2",
+                profile_dir=root / "browser-sessions" / "session-2" / "profile",
+                downloads_dir=root / "browser-sessions" / "session-2" / "downloads",
+                ws_endpoint_file=root / "browser-sessions" / "session-2" / "profile" / "browser-ws-endpoint.txt",
+                ws_endpoint="ws://browser-session-session-2:9223/playwright",
+                takeover_url="https://tailscale-box.example.ts.net:16081/vnc.html?autoconnect=true&resize=scale",
+                novnc_port=16081,
+                vnc_port=15901,
+            )
+            artifact_dir = Path(settings.artifact_root) / "session-2"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            session = BrowserSession(
+                id="session-2",
+                name="session-2",
+                created_at=datetime.now(UTC),
+                context=FakeContext(),  # type: ignore[arg-type]
+                page=FakePage("https://example.com/public"),  # type: ignore[arg-type]
+                artifact_dir=artifact_dir,
+                auth_dir=Path(settings.auth_root) / "session-2",
+                upload_dir=Path(settings.upload_root) / "session-2",
+                takeover_url=runtime.takeover_url,
+                trace_path=artifact_dir / "trace.zip",
+                browser_node_name=runtime.browser_node_name,
+                isolation_mode="docker_ephemeral",
+                runtime=runtime,
+                shared_takeover_surface=False,
+                shared_browser_process=False,
+            )
+
+            manager.sessions[session.id] = session
+            remote_access = manager.get_remote_access_info(session.id)
+
+            self.assertTrue(remote_access["active"])
+            self.assertEqual(remote_access["status"], "active")
+            self.assertFalse(remote_access["local_only"])
+            self.assertEqual(remote_access["takeover_url"], runtime.takeover_url)
 
 
 if __name__ == "__main__":
