@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .agent_jobs import AgentJobQueue
+from .audit import get_current_operator, reset_current_operator, set_current_operator
 from .approvals import ApprovalRequiredError
 from .browser_manager import BrowserManager
 from .config import get_settings
@@ -18,6 +19,7 @@ from .models import (
     ClickRequest,
     CreateSessionRequest,
     HumanTakeoverRequest,
+    McpToolCallRequest,
     NavigateRequest,
     PressRequest,
     SaveStorageStateRequest,
@@ -27,6 +29,7 @@ from .models import (
 )
 from .orchestrator import BrowserOrchestrator
 from .provider_registry import ProviderRegistry
+from .tool_gateway import McpToolGateway
 
 logging.basicConfig(level=logging.INFO)
 
@@ -38,7 +41,9 @@ job_queue = AgentJobQueue(
     orchestrator=orchestrator,
     store_root=settings.job_store_root,
     worker_count=settings.agent_job_worker_count,
+    audit_store=manager.audit,
 )
+tool_gateway = McpToolGateway(manager=manager, orchestrator=orchestrator, job_queue=job_queue)
 
 
 @asynccontextmanager
@@ -78,6 +83,28 @@ async def require_api_bearer_token(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def bind_operator_identity(request: Request, call_next):
+    path = request.url.path
+    exempt_prefixes = ("/healthz", "/readyz", "/docs", "/openapi.json", "/redoc", "/artifacts")
+    operator_id = request.headers.get(settings.operator_id_header)
+    operator_name = request.headers.get(settings.operator_name_header)
+
+    if settings.require_operator_id and not path.startswith(exempt_prefixes) and not operator_id:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": f"Missing required operator header: {settings.operator_id_header}",
+            },
+        )
+
+    token = set_current_operator(operator_id, name=operator_name, source="header")
+    try:
+        return await call_next(request)
+    finally:
+        reset_current_operator(token)
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -97,6 +124,11 @@ async def list_agent_providers() -> list[dict]:
     return [item.model_dump() for item in orchestrator.list_providers()]
 
 
+@app.get("/operator")
+async def get_operator() -> dict:
+    return get_current_operator().model_dump()
+
+
 @app.get("/agent/jobs")
 async def list_agent_jobs(status: str | None = None, session_id: str | None = None) -> list[dict]:
     return await job_queue.list_jobs(status=status, session_id=session_id)
@@ -113,6 +145,21 @@ async def get_agent_job(job_id: str) -> dict:
 @app.get("/remote-access")
 async def get_remote_access() -> dict:
     return manager.get_remote_access_info()
+
+
+@app.get("/audit/events")
+async def list_audit_events(
+    limit: int = 100,
+    session_id: str | None = None,
+    event_type: str | None = None,
+    operator_id: str | None = None,
+) -> list[dict]:
+    return await manager.list_audit_events(
+        limit=max(1, min(limit, 500)),
+        session_id=session_id,
+        event_type=event_type,
+        operator_id=operator_id,
+    )
 
 
 @app.get("/approvals")
@@ -191,6 +238,14 @@ async def create_session(payload: CreateSessionRequest) -> dict:
 async def get_session(session_id: str) -> dict:
     try:
         return await manager.get_session_record(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+
+
+@app.get("/sessions/{session_id}/auth-state")
+async def get_session_auth_state(session_id: str) -> dict:
+    try:
+        return await manager.get_auth_state_info(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
 
@@ -378,6 +433,16 @@ async def enqueue_agent_run(session_id: str, payload: AgentRunRequest) -> dict:
         return await job_queue.enqueue_run(session_id, payload)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+
+
+@app.get("/mcp/tools")
+async def list_mcp_tools() -> list[dict]:
+    return tool_gateway.list_tools()
+
+
+@app.post("/mcp/tools/call")
+async def call_mcp_tool(payload: McpToolCallRequest) -> dict:
+    return (await tool_gateway.call_tool(payload)).model_dump()
 
 
 @app.delete("/sessions/{session_id}")

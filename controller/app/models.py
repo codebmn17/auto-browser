@@ -232,8 +232,15 @@ class SessionRecord(BaseModel):
     takeover_url: str
     remote_access: dict[str, Any]
     isolation: dict[str, Any] = Field(default_factory=dict)
+    auth_state: dict[str, Any] = Field(default_factory=dict)
     last_action: str | None = None
     trace_path: str | None = None
+
+
+class OperatorIdentity(BaseModel):
+    id: str
+    name: str | None = None
+    source: str = "anonymous"
 
 
 class AgentJobRecord(BaseModel):
@@ -244,8 +251,44 @@ class AgentJobRecord(BaseModel):
     created_at: str
     updated_at: str
     request: dict[str, Any]
+    operator: OperatorIdentity | None = None
     result: dict[str, Any] | None = None
     error: str | None = None
+
+
+class AuditEvent(BaseModel):
+    id: str
+    timestamp: str
+    event_type: str
+    status: str
+    action: str | None = None
+    session_id: str | None = None
+    approval_id: str | None = None
+    job_id: str | None = None
+    operator: OperatorIdentity
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class McpToolDescriptor(BaseModel):
+    name: str
+    description: str
+    inputSchema: dict[str, Any]
+
+
+class McpToolCallRequest(BaseModel):
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class McpToolCallContent(BaseModel):
+    type: Literal["text"] = "text"
+    text: str
+
+
+class McpToolCallResponse(BaseModel):
+    content: list[McpToolCallContent]
+    structuredContent: Any | None = None
+    isError: bool = False
 
 
 BROWSER_ACTION_SCHEMA = BrowserActionDecision.model_json_schema()

@@ -151,10 +151,12 @@ The controller owns:
 - action execution via Playwright
 - screenshot capture and artifact storage
 - interactable extraction and stable element IDs
-- auth-state save/restore
+- auth-state save/restore with optional encryption + max-age enforcement
 - trace export on close
 - provider adapters and orchestration loops for OpenAI / Claude / Gemini
 - durable background job execution for queued agent step/run requests
+- audit events with operator identity tagging
+- an MCP-shaped browser tool gateway over HTTP
 
 ### Why the controller should be the only thing LLMs talk to
 
@@ -178,6 +180,7 @@ This POC includes real controller-side rails:
 - **read vs write action classes** in action logs
 - **approval queue** for uploads
 - **approval queue** for model-declared post / payment / account-change / destructive steps
+- **action verification** from before/after page signals
 
 Production should add more:
 - domain classes: read-only vs write-capable
@@ -207,7 +210,7 @@ The better loop is:
 3. let the model choose an `element_id` or selector
 4. execute the action
 5. capture the after-state
-6. verify what changed
+6. verify what changed with URL/title/focus/text/DOM-count signals
 
 That is the minimal reliable operator loop.
 
@@ -220,6 +223,11 @@ That is the minimal reliable operator loop.
 - durable session registry under `/data/sessions` with optional Redis backing
 - durable agent job queue under `/data/jobs`
 - local artifact volume
+- text-excerpt and DOM-outline perception summaries
+- action verification in action logs/responses
+- encrypted auth-state support
+- audit log at `/data/audit/events.jsonl`
+- MCP-shaped `/mcp/tools` + `/mcp/tools/call` surface
 
 ### Phase 2 — private remote access
 - put the stack behind Tailscale or Cloudflare Access
@@ -234,16 +242,14 @@ That is the minimal reliable operator loop.
 - per-session CPU/memory quotas
 
 ### Phase 4 — better model ergonomics
-- browser tool gateway as MCP server
 - built-in retry semantics
-- action verification policies
 - optional OCR / accessibility snapshots
 - route selection between DOM-click and coordinate-click
+- promote the current MCP-shaped HTTP gateway into a full MCP transport server
 
 ### Phase 5 — enterprise hardening
-- encrypted auth-state storage
 - approval workflows backed by a database + operator identity
-- audit log export
+- audit log export and retention controls
 - secret rotation
 - SSO and operator identity
 

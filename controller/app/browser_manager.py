@@ -13,7 +13,9 @@ from uuid import uuid4
 
 from playwright.async_api import Browser, BrowserContext, Error as PlaywrightError, Page, Playwright, async_playwright
 
+from .audit import AuditStore
 from .approvals import ApprovalRequiredError, ApprovalStore
+from .auth_state import AuthStateManager
 from .config import Settings
 from .models import ApprovalKind, BrowserActionDecision, SessionRecord, SessionStatus
 from .session_store import DurableSessionStore
@@ -96,6 +98,59 @@ ACTIVE_ELEMENT_SCRIPT = r"""
 }
 """
 
+PAGE_SUMMARY_SCRIPT = r"""
+(textLimit) => {
+  const squash = (value, maxLength = textLimit) =>
+    String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+
+  const headings = Array.from(document.querySelectorAll('h1,h2,h3'))
+    .slice(0, 8)
+    .map((el) => ({
+      level: el.tagName.toLowerCase(),
+      text: squash(el.innerText, 160)
+    }))
+    .filter((item) => item.text);
+
+  const forms = Array.from(document.forms)
+    .slice(0, 3)
+    .map((form) => ({
+      action: form.getAttribute('action') || null,
+      method: (form.getAttribute('method') || 'get').toLowerCase(),
+      fields: Array.from(form.querySelectorAll('input, textarea, select, button'))
+        .slice(0, 8)
+        .map((field) => ({
+          tag: field.tagName.toLowerCase(),
+          type: field.getAttribute('type') || null,
+          name: field.getAttribute('name') || null,
+          label: squash(
+            field.getAttribute('aria-label')
+              || field.getAttribute('placeholder')
+              || field.innerText
+              || field.value
+              || field.getAttribute('name')
+              || field.id,
+            80
+          ),
+          disabled: Boolean(field.disabled || field.getAttribute('aria-disabled') === 'true')
+        }))
+    }));
+
+  return {
+    text_excerpt: squash(document.body?.innerText || '', textLimit),
+    dom_outline: {
+      headings,
+      forms,
+      counts: {
+        links: document.querySelectorAll('a').length,
+        buttons: document.querySelectorAll('button, [role=\"button\"]').length,
+        inputs: document.querySelectorAll('input, textarea, select').length,
+        forms: document.forms.length
+      }
+    }
+  };
+}
+"""
+
 
 @dataclass
 class BrowserSession:
@@ -116,6 +171,7 @@ class BrowserSession:
     page_errors: list[str] = field(default_factory=list)
     request_failures: list[dict[str, Any]] = field(default_factory=list)
     last_action: str | None = None
+    last_auth_state_path: Path | None = None
 
 
 class BrowserManager:
@@ -130,12 +186,19 @@ class BrowserManager:
         Path(self.settings.upload_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.auth_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.approval_root).mkdir(parents=True, exist_ok=True)
+        Path(self.settings.audit_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.session_store_root).mkdir(parents=True, exist_ok=True)
         self.approvals = ApprovalStore(self.settings.approval_root)
+        self.audit = AuditStore(self.settings.audit_root)
         self.session_store = DurableSessionStore(
             file_root=self.settings.session_store_root,
             redis_url=self.settings.redis_url,
             redis_prefix=self.settings.session_store_redis_prefix,
+        )
+        self.auth_state = AuthStateManager(
+            encryption_key=self.settings.auth_state_encryption_key,
+            require_encryption=self.settings.require_auth_state_encryption,
+            max_age_hours=self.settings.auth_state_max_age_hours,
         )
 
     def get_remote_access_info(self) -> dict[str, Any]:
@@ -227,6 +290,7 @@ class BrowserManager:
 
     async def startup(self) -> None:
         logger.info("starting browser manager")
+        await self.audit.startup()
         await self.session_store.startup()
         await self.session_store.mark_all_active_interrupted()
         self.playwright = await async_playwright().start()
@@ -324,6 +388,7 @@ class BrowserManager:
         upload_dir = self._session_upload_root(session_id)
         auth_dir.mkdir(parents=True, exist_ok=True)
         upload_dir.mkdir(parents=True, exist_ok=True)
+        prepared_auth_state = None
 
         context_kwargs: dict[str, Any] = {
             "viewport": {
@@ -333,7 +398,9 @@ class BrowserManager:
             "accept_downloads": True,
         }
         if storage_state_path:
-            context_kwargs["storage_state"] = str(self._safe_auth_path(storage_state_path, must_exist=True))
+            source_path = self._safe_auth_path(storage_state_path, must_exist=True)
+            prepared_auth_state = self.auth_state.prepare_for_context(source_path)
+            context_kwargs["storage_state"] = str(prepared_auth_state.path)
 
         context: BrowserContext | None = None
         session: BrowserSession | None = None
@@ -355,6 +422,7 @@ class BrowserManager:
                 upload_dir=upload_dir,
                 takeover_url=self.settings.takeover_url,
                 trace_path=artifact_dir / "trace.zip",
+                last_auth_state_path=source_path if storage_state_path else None,
             )
             self._attach_page_listeners(page, session)
             self.sessions[session_id] = session
@@ -364,12 +432,23 @@ class BrowserManager:
                 await self._settle(page)
 
             await self._persist_session(session, status="active")
-            return await self._session_summary(session)
+            summary = await self._session_summary(session)
+            await self.audit.append(
+                event_type="session_created",
+                status="ok",
+                action="create_session",
+                session_id=session.id,
+                details={"start_url": start_url, "storage_state_path": storage_state_path},
+            )
+            return summary
         except Exception:
             self.sessions.pop(session_id, None)
             if context is not None:
                 await context.close()
             raise
+        finally:
+            if prepared_auth_state is not None:
+                prepared_auth_state.cleanup()
 
     async def get_session(self, session_id: str) -> BrowserSession:
         session = self.sessions.get(session_id)
@@ -399,10 +478,26 @@ class BrowserManager:
 
     async def approve(self, approval_id: str, comment: str | None = None) -> dict[str, Any]:
         approval = await self.approvals.approve(approval_id, comment=comment)
+        await self.audit.append(
+            event_type="approval_decision",
+            status="approved",
+            action="approve",
+            session_id=approval.session_id,
+            approval_id=approval.id,
+            details={"kind": approval.kind, "comment": comment},
+        )
         return approval.model_dump()
 
     async def reject(self, approval_id: str, comment: str | None = None) -> dict[str, Any]:
         approval = await self.approvals.reject(approval_id, comment=comment)
+        await self.audit.append(
+            event_type="approval_decision",
+            status="rejected",
+            action="reject",
+            session_id=approval.session_id,
+            approval_id=approval.id,
+            details={"kind": approval.kind, "comment": comment},
+        )
         return approval.model_dump()
 
     async def execute_approval(self, approval_id: str) -> dict[str, Any]:
@@ -428,6 +523,14 @@ class BrowserManager:
                 approval_id=approval.id,
             )
             latest = await self.approvals.get(approval.id)
+        await self.audit.append(
+            event_type="approval_executed",
+            status="ok",
+            action="execute_approval",
+            session_id=approval.session_id,
+            approval_id=approval.id,
+            details={"kind": approval.kind, "action": decision.action},
+        )
         return {
             "approval": latest.model_dump(),
             "execution": execution,
@@ -626,14 +729,23 @@ class BrowserManager:
         session = await self.get_session(session_id)
         safe_path = self._safe_session_auth_path(session, path)
         async with session.lock:
-            await session.context.storage_state(path=str(safe_path))
+            auth_info = await self.auth_state.write_storage_state(session.context, safe_path)
+            session.last_auth_state_path = Path(auth_info["path"]) if auth_info["path"] else None
             payload = {
-                "saved_to": str(safe_path),
+                "saved_to": auth_info["path"],
+                "auth_state": auth_info,
                 "session": await self._session_summary(session),
             }
             await self._append_jsonl(
                 session.artifact_dir / "actions.jsonl",
                 {"timestamp": self._timestamp(), "action": "save_storage_state", **payload},
+            )
+            await self.audit.append(
+                event_type="auth_state_saved",
+                status="ok",
+                action="save_storage_state",
+                session_id=session.id,
+                details={"saved_to": auth_info["path"], "encrypted": auth_info["encrypted"]},
             )
             await self._persist_session(session, status="active")
             return payload
@@ -650,6 +762,13 @@ class BrowserManager:
         await self._append_jsonl(
             session.artifact_dir / "actions.jsonl",
             {"timestamp": self._timestamp(), "action": "request_human_takeover", **payload},
+        )
+        await self.audit.append(
+            event_type="takeover_requested",
+            status="ok",
+            action="request_human_takeover",
+            session_id=session.id,
+            details={"reason": reason},
         )
         await self._persist_session(session, status="active")
         return payload
@@ -695,6 +814,13 @@ class BrowserManager:
             await session.context.close()
             await self.session_store.upsert(SessionRecord.model_validate(summary))
             self.sessions.pop(session_id, None)
+            await self.audit.append(
+                event_type="session_closed",
+                status="ok",
+                action="close_session",
+                session_id=session.id,
+                details={"trace_path": str(session.trace_path)},
+            )
             return {"closed": True, "trace_path": str(session.trace_path), "session": summary}
 
     async def _run_action(
@@ -729,6 +855,13 @@ class BrowserManager:
                         "error": str(exc),
                     },
                 )
+                await self.audit.append(
+                    event_type="browser_action",
+                    status="blocked",
+                    action=action_name,
+                    session_id=session.id,
+                    details={"target": target, "error": str(exc)},
+                )
                 raise
             except PlaywrightError as exc:
                 failed = await self._light_snapshot(session, label=f"failed-{action_name}")
@@ -744,11 +877,19 @@ class BrowserManager:
                         "error": str(exc),
                     },
                 )
+                await self.audit.append(
+                    event_type="browser_action",
+                    status="failed",
+                    action=action_name,
+                    session_id=session.id,
+                    details={"target": target, "error": str(exc)},
+                )
                 raise ValueError(
                     f"Action failed for {action_name}. Refresh observation and retry. Details: {exc}"
                 ) from exc
             after = await self._observation_payload(session, limit=20, screenshot_label=f"after-{action_name}")
             session.last_action = action_name
+            verification = self._action_verification(action_name, target, before, after)
             payload = {
                 "timestamp": self._timestamp(),
                 "action": action_name,
@@ -756,8 +897,16 @@ class BrowserManager:
                 "target": target,
                 "before": before,
                 "after": after,
+                "verification": verification,
             }
             await self._append_jsonl(session.artifact_dir / "actions.jsonl", payload)
+            await self.audit.append(
+                event_type="browser_action",
+                status="ok",
+                action=action_name,
+                session_id=session.id,
+                details={"target": target, "verification": verification},
+            )
             await self._persist_session(session, status="active")
             return {
                 "action": action_name,
@@ -766,6 +915,7 @@ class BrowserManager:
                 "before": before,
                 "after": after,
                 "target": target,
+                "verification": verification,
             }
 
     async def _observation_payload(
@@ -777,13 +927,14 @@ class BrowserManager:
     ) -> dict[str, Any]:
         interactables = await session.page.evaluate(INTERACTABLES_SCRIPT, limit)
         screenshot = await self._capture_screenshot(session, screenshot_label)
-        title = await session.page.title()
-        active_element = await session.page.evaluate(ACTIVE_ELEMENT_SCRIPT)
+        summary = await self._page_summary(session.page)
         return {
             "session": await self._session_summary(session),
             "url": session.page.url,
-            "title": title,
-            "active_element": active_element,
+            "title": summary["title"],
+            "active_element": summary["active_element"],
+            "text_excerpt": summary["text_excerpt"],
+            "dom_outline": summary["dom_outline"],
             "interactables": interactables,
             "screenshot_path": screenshot["path"],
             "screenshot_url": screenshot["url"],
@@ -796,12 +947,13 @@ class BrowserManager:
 
     async def _light_snapshot(self, session: BrowserSession, *, label: str) -> dict[str, Any]:
         screenshot = await self._capture_screenshot(session, label)
-        title = await session.page.title()
-        active_element = await session.page.evaluate(ACTIVE_ELEMENT_SCRIPT)
+        summary = await self._page_summary(session.page)
         return {
             "url": session.page.url,
-            "title": title,
-            "active_element": active_element,
+            "title": summary["title"],
+            "active_element": summary["active_element"],
+            "text_excerpt": summary["text_excerpt"],
+            "dom_outline": summary["dom_outline"],
             "screenshot_path": screenshot["path"],
             "screenshot_url": screenshot["url"],
         }
@@ -811,6 +963,95 @@ class BrowserManager:
         path = session.artifact_dir / filename
         await session.page.screenshot(path=str(path), full_page=False)
         return {"path": str(path), "url": f"/artifacts/{session.id}/{filename}"}
+
+    async def _page_summary(self, page: Page) -> dict[str, Any]:
+        summary = await page.evaluate(PAGE_SUMMARY_SCRIPT, 2000)
+        return {
+            "title": await page.title(),
+            "active_element": await page.evaluate(ACTIVE_ELEMENT_SCRIPT),
+            "text_excerpt": summary.get("text_excerpt", ""),
+            "dom_outline": summary.get("dom_outline", {}),
+        }
+
+    def _session_auth_state_info(self, session: BrowserSession) -> dict[str, Any]:
+        info = self.auth_state.inspect(session.last_auth_state_path)
+        info["session_auth_root"] = str(session.auth_dir)
+        return info
+
+    async def get_auth_state_info(self, session_id: str) -> dict[str, Any]:
+        session = self.sessions.get(session_id)
+        if session is not None:
+            return self._session_auth_state_info(session)
+        record = await self.session_store.get(session_id)
+        return record.auth_state
+
+    async def list_audit_events(
+        self,
+        *,
+        limit: int = 100,
+        session_id: str | None = None,
+        event_type: str | None = None,
+        operator_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        events = await self.audit.list(
+            limit=limit,
+            session_id=session_id,
+            event_type=event_type,
+            operator_id=operator_id,
+        )
+        return [item.model_dump() for item in events]
+
+    @staticmethod
+    def _action_verification(
+        action_name: str,
+        target: dict[str, Any],
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> dict[str, Any]:
+        signals: list[str] = []
+        if before.get("url") != after.get("url"):
+            signals.append("url_changed")
+        if before.get("title") != after.get("title"):
+            signals.append("title_changed")
+        if before.get("active_element") != after.get("active_element"):
+            signals.append("active_element_changed")
+        if before.get("text_excerpt") != after.get("text_excerpt"):
+            signals.append("text_excerpt_changed")
+
+        before_counts = (before.get("dom_outline") or {}).get("counts") or {}
+        after_counts = (after.get("dom_outline") or {}).get("counts") or {}
+        if before_counts != after_counts:
+            signals.append("dom_counts_changed")
+
+        interacted_element = target.get("element_id")
+        selector = target.get("selector")
+        interactables = after.get("interactables") or []
+        target_seen_after = None
+        if interacted_element:
+            target_seen_after = any(item.get("element_id") == interacted_element for item in interactables)
+        elif selector:
+            target_seen_after = any(item.get("selector_hint") == selector for item in interactables)
+
+        if target_seen_after is True:
+            signals.append("target_still_visible")
+        elif target_seen_after is False:
+            signals.append("target_no_longer_visible")
+
+        verified = bool(signals)
+        if action_name == "navigate":
+            verified = "url_changed" in signals or "title_changed" in signals
+        elif action_name in {"click", "press", "scroll"}:
+            verified = bool({"url_changed", "title_changed", "active_element_changed", "text_excerpt_changed"} & set(signals))
+        elif action_name == "type":
+            verified = bool({"active_element_changed", "text_excerpt_changed"} & set(signals))
+        elif action_name == "upload":
+            verified = True
+
+        return {
+            "verified": verified,
+            "signals": signals,
+            "target_seen_after": target_seen_after,
+        }
 
     async def _session_summary(
         self,
@@ -832,6 +1073,7 @@ class BrowserManager:
             "takeover_url": self._current_takeover_url(session),
             "remote_access": self.get_remote_access_info(),
             "isolation": self._session_isolation(session),
+            "auth_state": self._session_auth_state_info(session),
             "last_action": session.last_action,
             "trace_path": str(session.trace_path),
         }
@@ -892,6 +1134,7 @@ class BrowserManager:
             "takeover_url": self._current_takeover_url(session),
             "remote_access": self.get_remote_access_info(),
             "isolation": self._session_isolation(session),
+            "auth_state": self._session_auth_state_info(session),
             "last_action": session.last_action,
         }
 

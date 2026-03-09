@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from uuid import uuid4
 
+from .audit import get_current_operator
 from .models import AgentJobRecord, AgentJobStatus, AgentRunRequest, AgentStepRequest
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ class AgentJobStore:
     async def get(self, job_id: str) -> AgentJobRecord:
         return await asyncio.to_thread(self._get_sync, job_id)
 
-    async def create(self, *, session_id: str, kind: str, request: dict) -> AgentJobRecord:
+    async def create(self, *, session_id: str, kind: str, request: dict, operator=None) -> AgentJobRecord:
         async with self._lock:
             now = self._timestamp()
             record = AgentJobRecord(
@@ -40,6 +41,7 @@ class AgentJobStore:
                 created_at=now,
                 updated_at=now,
                 request=request,
+                operator=operator,
             )
             await asyncio.to_thread(self._write_sync, record)
             return record
@@ -95,13 +97,14 @@ class AgentJobStore:
 
 
 class AgentJobQueue:
-    def __init__(self, *, orchestrator, store_root: str | Path, worker_count: int = 1):
+    def __init__(self, *, orchestrator, store_root: str | Path, worker_count: int = 1, audit_store=None):
         self.orchestrator = orchestrator
         self.store = AgentJobStore(store_root)
         self.worker_count = max(1, worker_count)
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self._workers: list[asyncio.Task] = []
         self._started = False
+        self.audit = audit_store
 
     async def startup(self) -> None:
         await self.store.startup()
@@ -143,8 +146,10 @@ class AgentJobQueue:
             session_id=session_id,
             kind="agent_step",
             request=payload.model_dump(),
+            operator=get_current_operator(),
         )
         await self.queue.put(record.id)
+        await self._audit("agent_job_enqueued", "queued", record)
         return record.model_dump()
 
     async def enqueue_run(self, session_id: str, payload: AgentRunRequest) -> dict:
@@ -152,8 +157,10 @@ class AgentJobQueue:
             session_id=session_id,
             kind="agent_run",
             request=payload.model_dump(),
+            operator=get_current_operator(),
         )
         await self.queue.put(record.id)
+        await self._audit("agent_job_enqueued", "queued", record)
         return record.model_dump()
 
     async def _worker_loop(self, worker_index: int) -> None:
@@ -175,6 +182,7 @@ class AgentJobQueue:
 
         record.status = "running"
         await self.store.update(record)
+        await self._audit("agent_job_started", "running", record)
 
         try:
             if record.kind == "agent_step":
@@ -210,3 +218,17 @@ class AgentJobQueue:
             record.error = str(exc)
             record.result = None
         await self.store.update(record)
+        await self._audit("agent_job_finished", record.status, record)
+
+    async def _audit(self, event_type: str, status: str, record: AgentJobRecord) -> None:
+        if self.audit is None:
+            return
+        await self.audit.append(
+            event_type=event_type,
+            status=status,
+            action=record.kind,
+            session_id=record.session_id,
+            job_id=record.id,
+            operator=record.operator,
+            details={"kind": record.kind, "error": record.error},
+        )

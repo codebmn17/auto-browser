@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY tests ./tests
 
-RUN mkdir -p /data/artifacts /data/uploads /data/auth /data/approvals /data/jobs /data/sessions /data/tunnels
+RUN mkdir -p /data/artifacts /data/uploads /data/auth /data/approvals /data/audit /data/jobs /data/sessions /data/tunnels
 
 EXPOSE 8000
 

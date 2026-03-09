@@ -131,6 +131,8 @@ class SessionStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(persisted["status"], "closed")
         self.assertFalse(persisted["live"])
         self.assertEqual(persisted["isolation"]["mode"], "shared_browser_node")
+        auth_state = await self.manager.get_auth_state_info("session-live")
+        self.assertEqual(auth_state["session_auth_root"], str(live_session.auth_dir))
 
     async def test_session_scoped_paths_prefer_session_roots(self) -> None:
         artifact_dir = Path(self.settings.artifact_root) / "session-scope"

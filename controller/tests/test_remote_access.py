@@ -19,7 +19,7 @@ class FakePage:
         return "Example Domain"
 
     async def evaluate(self, script: str, arg=None):
-        if arg is not None:
+        if "document.querySelectorAll(selector)" in script:
             return [
                 {
                     "element_id": "op-123",
@@ -33,6 +33,15 @@ class FakePage:
                     "selector_hint": '[data-operator-id="op-123"]',
                 }
             ]
+        if "text_excerpt" in script and "dom_outline" in script:
+            return {
+                "text_excerpt": "Example Domain. More information.",
+                "dom_outline": {
+                    "headings": [{"level": "h1", "text": "Example Domain"}],
+                    "forms": [],
+                    "counts": {"links": 1, "buttons": 0, "inputs": 0, "forms": 0},
+                },
+            }
         return {
             "tag": "body",
             "element_id": None,

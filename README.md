@@ -8,12 +8,15 @@ This scaffold gives you:
 - **screen-aware observations** with screenshots and interactable element IDs
 - **human takeover** through noVNC
 - **artifact capture** for screenshots, traces, and storage state
+- optional **encrypted auth-state storage** with max-age enforcement on restore
 - **basic policy rails** with host allowlists and upload approval gates
 - **durable session metadata** under `/data/sessions`, with optional Redis backing
 - **durable agent job records** under `/data/jobs` with background workers for queued step/run requests
+- **audit events** with per-request operator identity headers
 - provider adapters for **OpenAI, Claude, and Gemini** behind one internal action schema
 - one-step and multi-step **agent orchestration endpoints**
 - a browser-node managed **Playwright server endpoint** so the controller connects over Playwright protocol instead of CDP
+- an **MCP-shaped browser tool gateway** at `/mcp/tools` + `/mcp/tools/call`
 
 It is intentionally **not** a stealth or anti-bot system. It is for operator-assisted browser workflows on sites and accounts you are authorized to use.
 
@@ -51,6 +54,15 @@ If you want the controller API itself protected, set `API_BEARER_TOKEN` and send
 ```bash
 Authorization: Bearer <token>
 ```
+
+Optional operator headers:
+
+```bash
+X-Operator-Id: alice
+X-Operator-Name: Alice Example
+```
+
+Set `REQUIRE_OPERATOR_ID=true` if every non-health request must carry an operator ID.
 
 For remote access, you now have two sane paths:
 - put the stack behind **Tailscale / Cloudflare Access**
@@ -153,6 +165,8 @@ curl -s http://localhost:8000/sessions/<session-id>/observe | jq
 
 The response includes:
 - current URL and title
+- a page-level `text_excerpt`
+- a compact `dom_outline` with headings, forms, and element counts
 - a screenshot path and artifact URL
 - interactable elements with observation-scoped `element_id` values
 - recent console errors
@@ -191,6 +205,20 @@ That path is now saved under the session’s own auth root:
 
 ```text
 /data/auth/<session-id>/demo-auth.json
+```
+
+If `AUTH_STATE_ENCRYPTION_KEY` is set, the controller saves:
+
+```text
+/data/auth/<session-id>/demo-auth.json.enc
+```
+
+Restores enforce `AUTH_STATE_MAX_AGE_HOURS`, so stale auth-state files are rejected instead of silently reused.
+
+Inspect the current auth-state metadata:
+
+```bash
+curl -s http://localhost:8000/sessions/<session-id>/auth-state | jq
 ```
 
 ### Stage upload files
@@ -289,6 +317,32 @@ curl -s http://localhost:8000/agent/jobs/<job-id> | jq
 
 Queued jobs are persisted under `/data/jobs`. If the controller restarts mid-run, any previously `running` jobs are marked `interrupted` on startup instead of disappearing.
 
+### Audit trail and operator identity
+
+```bash
+curl -s http://localhost:8000/operator | jq
+curl -s 'http://localhost:8000/audit/events?limit=20' | jq
+curl -s 'http://localhost:8000/audit/events?session_id=<session-id>' | jq
+```
+
+Audit events are written to `/data/audit/events.jsonl`.
+
+### MCP-shaped browser gateway
+
+```bash
+curl -s http://localhost:8000/mcp/tools | jq
+
+curl -s http://localhost:8000/mcp/tools/call \
+  -X POST \
+  -H 'content-type: application/json' \
+  -d '{
+    "name":"browser.observe",
+    "arguments":{"session_id":"<session-id>","limit":20}
+  }' | jq
+```
+
+This is not a full MCP transport server yet. It is a clean MCP-shaped HTTP surface that other agents can reuse now.
+
 ## Project layout
 
 ```text
@@ -313,6 +367,8 @@ browser-operator-poc/
 - Keep **one active session per browser node** in this POC because takeover is tied to one visible desktop.
 - Keep a durable session registry even in the POC so restarts downgrade active sessions to **interrupted** instead of losing them.
 - Treat each session’s auth/upload roots as isolated working state even though the visible desktop is still shared.
+- Encrypt auth-state at rest once you move beyond localhost demos.
+- Require operator IDs once more than one human or worker touches the system.
 
 ## Production upgrades after the POC
 
@@ -321,6 +377,7 @@ browser-operator-poc/
 - run **one browser pod per account**
 - persist approvals in a database instead of flat files when the POC grows
 - add per-operator identity / SSO on top of the approval queue
+- turn the MCP-shaped gateway into a full MCP transport if you need native tool discovery/streaming
 
 ## References
 
@@ -348,3 +405,12 @@ Optional durable session-store knobs:
 - `SESSION_STORE_ROOT`
 - `REDIS_URL`
 - `SESSION_STORE_REDIS_PREFIX`
+
+Optional auth/audit/operator knobs:
+- `AUDIT_ROOT`
+- `AUTH_STATE_ENCRYPTION_KEY`
+- `REQUIRE_AUTH_STATE_ENCRYPTION`
+- `AUTH_STATE_MAX_AGE_HOURS`
+- `OPERATOR_ID_HEADER`
+- `OPERATOR_NAME_HEADER`
+- `REQUIRE_OPERATOR_ID`
