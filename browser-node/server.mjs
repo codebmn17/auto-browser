@@ -21,15 +21,10 @@ const browserServer = await chromium.launchServer({
     "--disable-gpu",
     "--disable-software-rasterizer",
     "--disable-background-networking",
-    "--disable-blink-features=AutomationControlled",
     "--no-first-run",
     "--no-default-browser-check",
     "--lang=en-US,en",
     "--disable-notifications",
-    "--disable-infobars",
-    "--disable-popup-blocking",
-    "--no-sandbox",
-    "--disable-web-security",
   ],
 });
 

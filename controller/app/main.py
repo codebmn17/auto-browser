@@ -30,9 +30,9 @@ from .models import (
     SaveStorageStateRequest,
     ScrollRequest,
     SocialScrollRequest,
-    SocialScrapeRequest,
     SocialPostRequest,
     SocialLikeRequest,
+    SocialFollowRequest,
     SocialSearchRequest,
     TabIndexRequest,
     TypeRequest,
@@ -360,7 +360,6 @@ async def create_session(payload: CreateSessionRequest) -> dict:
             request_proxy_username=payload.proxy_username,
             request_proxy_password=payload.proxy_password,
             user_agent=payload.user_agent,
-            stealth_enabled=payload.stealth,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -576,25 +575,43 @@ async def social_extract_profile(session_id: str) -> dict:
 @app.post("/sessions/{session_id}/social/post")
 async def social_post(session_id: str, payload: SocialPostRequest) -> dict:
     try:
-        return await manager.post_content(session_id, text=payload.text)
+        return await manager.post_content(session_id, text=payload.text, approval_id=payload.approval_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ApprovalRequiredError as exc:
+        raise HTTPException(status_code=409, detail=exc.payload) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/sessions/{session_id}/social/like")
 async def social_like(session_id: str, payload: SocialLikeRequest) -> dict:
     try:
-        return await manager.like_post(session_id, post_index=payload.post_index)
+        return await manager.like_post(session_id, post_index=payload.post_index, approval_id=payload.approval_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ApprovalRequiredError as exc:
+        raise HTTPException(status_code=409, detail=exc.payload) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/sessions/{session_id}/social/follow")
-async def social_follow(session_id: str) -> dict:
+async def social_follow(session_id: str, payload: SocialFollowRequest) -> dict:
     try:
-        return await manager.follow_user(session_id)
+        return await manager.follow_user(session_id, approval_id=payload.approval_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ApprovalRequiredError as exc:
+        raise HTTPException(status_code=409, detail=exc.payload) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/sessions/{session_id}/social/search")
@@ -603,6 +620,8 @@ async def social_search(session_id: str, payload: SocialSearchRequest) -> dict:
         return await manager.search_page(session_id, query=payload.query)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/sessions/{session_id}/storage-state")

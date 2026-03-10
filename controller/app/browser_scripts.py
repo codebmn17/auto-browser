@@ -130,6 +130,91 @@ PAGE_SUMMARY_SCRIPT = r"""
 }
 """
 
+# Feed/profile extraction helpers
+EXTRACT_POSTS_SCRIPT = r"""
+(limit) => {
+  const candidates = [];
+  const seen = new Set();
+  const els = document.querySelectorAll(
+    'article, [role="article"], [data-testid*="tweet"], ' +
+    '[data-testid*="post"], [class*="post-content"], ' +
+    '[class*="feed-item"], [class*="timeline-item"]'
+  );
+  for (const el of els) {
+    const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (text.length < 20 || seen.has(text.slice(0, 100))) continue;
+    seen.add(text.slice(0, 100));
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0) continue;
+    const links = [...el.querySelectorAll('a[href]')]
+      .map(a => a.href).filter(h => h && !h.startsWith('javascript'));
+    const imgs = [...el.querySelectorAll('img[src]')].map(i => i.src).slice(0, 3);
+    candidates.push({
+      text: text.slice(0, 600),
+      links: links.slice(0, 5),
+      images: imgs,
+      tag: el.tagName.toLowerCase(),
+      y_position: Math.round(rect.top + window.scrollY),
+    });
+    if (candidates.length >= limit) break;
+  }
+  return candidates;
+}
+"""
+
+EXTRACT_PROFILE_SCRIPT = r"""
+() => {
+  function first(selectors) {
+    for (const s of selectors) {
+      const el = document.querySelector(s);
+      const text = el ? (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim() : null;
+      if (text && text.length > 0) return text.slice(0, 300);
+    }
+    return null;
+  }
+  function findCount(keyword) {
+    for (const el of document.querySelectorAll('a, span, div')) {
+      const text = (el.innerText || '').toLowerCase();
+      if (text.includes(keyword) && /[\d,]+/.test(text)) {
+        const m = text.match(/([\d,.]+\s*[kmb]?)/i);
+        return m ? m[0].trim() : null;
+      }
+    }
+    return null;
+  }
+  return {
+    page_title: document.title,
+    url: window.location.href,
+    username: first(['[data-testid="UserName"]', '.username', 'h1', '[class*="username"]']),
+    display_name: first(['[data-testid="UserName"] span', '[class*="display-name"]', '[class*="displayName"]']),
+    bio: first(['[data-testid="UserDescription"]', '[class*="bio"]', '[class*="about"]', '[class*="description"]']),
+    followers: findCount('follower'),
+    following: findCount('following'),
+    post_count: findCount('post') || findCount('tweet') || findCount('video'),
+    avatar_url: document.querySelector(
+      'img[src*="profile_image"], img[src*="avatar"], img[class*="avatar"], img[class*="profile"]'
+    )?.src || null,
+  };
+}
+"""
+
+SMOOTH_SCROLL_SCRIPT = r"""
+(deltaY) => {
+  return new Promise((resolve) => {
+    const step = Math.sign(deltaY) * Math.min(Math.abs(deltaY), 80);
+    let remaining = Math.abs(deltaY);
+    function tick() {
+      if (remaining <= 0) { resolve(); return; }
+      const amount = Math.min(remaining, Math.abs(step));
+      window.scrollBy({ top: Math.sign(deltaY) * amount, behavior: 'auto' });
+      remaining -= amount;
+      setTimeout(tick, 16 + Math.random() * 8);
+    }
+    tick();
+  });
+}
+"""
+
 # Social interaction scripts — find and click engagement buttons
 FIND_LIKE_BUTTON_SCRIPT = r"""
 (postIndex) => {
@@ -178,6 +263,7 @@ FIND_FOLLOW_BUTTON_SCRIPT = r"""
       const rect = el.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
         return {
+          selector: sel,
           x: Math.round(rect.x + rect.width / 2),
           y: Math.round(rect.y + rect.height / 2),
           label: (el.innerText || el.getAttribute('aria-label') || '').trim().slice(0, 80),

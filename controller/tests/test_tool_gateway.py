@@ -24,6 +24,13 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             save_storage_state=AsyncMock(return_value={"saved_to": "/data/auth/session-1/state.json.enc"}),
             request_human_takeover=AsyncMock(return_value={"takeover_url": "http://127.0.0.1:6080/vnc.html"}),
             close_session=AsyncMock(return_value={"closed": True}),
+            scroll_feed=AsyncMock(return_value={"action": "scroll_feed"}),
+            extract_posts=AsyncMock(return_value=[{"text": "hello"}]),
+            extract_profile=AsyncMock(return_value={"username": "@example"}),
+            post_content=AsyncMock(return_value={"action": "social_post"}),
+            like_post=AsyncMock(return_value={"action": "social_like"}),
+            follow_user=AsyncMock(return_value={"action": "social_follow"}),
+            search_page=AsyncMock(return_value={"action": "social_search"}),
             list_approvals=AsyncMock(return_value=[]),
             approve=AsyncMock(return_value={"id": "approval-1", "status": "approved"}),
             reject=AsyncMock(return_value={"id": "approval-1", "status": "rejected"}),
@@ -56,6 +63,10 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("browser.execute_action", names)
         self.assertIn("browser.list_agent_jobs", names)
         self.assertIn("browser.get_remote_access", names)
+        self.assertIn("social.post", names)
+        self.assertIn("social.like", names)
+        self.assertIn("social.follow", names)
+        self.assertIn("social.search", names)
         self.assertEqual(len(names), len(tools))
 
     async def test_execute_action_tool_returns_structured_payload(self) -> None:
@@ -80,6 +91,32 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(called_args[0], "session-1")
         self.assertIsInstance(called_args[1], BrowserActionDecision)
         self.assertEqual(called_args[1].element_id, "op-123")
+
+    async def test_create_session_forwards_proxy_and_user_agent_options(self) -> None:
+        response = await self.gateway.call_tool(
+            McpToolCallRequest(
+                name="browser.create_session",
+                arguments={
+                    "name": "session-1",
+                    "start_url": "https://example.com",
+                    "proxy_server": "http://proxy.internal:8080",
+                    "proxy_username": "alice",
+                    "proxy_password": "secret",
+                    "user_agent": "AutoBrowserTest/1.0",
+                },
+            )
+        )
+
+        self.assertFalse(response.isError)
+        self.manager.create_session.assert_awaited_once_with(
+            name="session-1",
+            start_url="https://example.com",
+            storage_state_path=None,
+            request_proxy_server="http://proxy.internal:8080",
+            request_proxy_username="alice",
+            request_proxy_password="secret",
+            user_agent="AutoBrowserTest/1.0",
+        )
 
     async def test_approval_required_bubbles_back_as_tool_error(self) -> None:
         approval = ApprovalRecord(
@@ -117,3 +154,54 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response.isError)
         self.assertEqual(response.structuredContent["status"], "approval_required")
         self.assertEqual(response.structuredContent["approval"]["id"], "approval-1")
+
+    async def test_social_post_tool_bubbles_approval_back_as_tool_error(self) -> None:
+        approval = ApprovalRecord(
+            id="approval-social-1",
+            session_id="session-1",
+            kind="post",
+            status="pending",
+            created_at="2026-03-09T00:00:00Z",
+            updated_at="2026-03-09T00:00:00Z",
+            reason="Posting requires approval",
+            action=BrowserActionDecision(
+                action="social_post",
+                reason="Publish a social post",
+                text="hello world",
+                risk_category="post",
+            ),
+        )
+        self.manager.post_content = AsyncMock(side_effect=ApprovalRequiredError(approval))
+
+        response = await self.gateway.call_tool(
+            McpToolCallRequest(
+                name="social.post",
+                arguments={
+                    "session_id": "session-1",
+                    "text": "hello world",
+                },
+            )
+        )
+
+        self.assertTrue(response.isError)
+        self.assertEqual(response.structuredContent["status"], "approval_required")
+        self.assertEqual(response.structuredContent["approval"]["kind"], "post")
+
+    async def test_social_post_tool_forwards_approval_id(self) -> None:
+        response = await self.gateway.call_tool(
+            McpToolCallRequest(
+                name="social.post",
+                arguments={
+                    "session_id": "session-1",
+                    "text": "hello world",
+                    "approval_id": "approval-social-1",
+                },
+            )
+        )
+
+        self.assertFalse(response.isError)
+        self.manager.post_content.assert_awaited_once_with(
+            "session-1",
+            text="hello world",
+            approval_id="approval-social-1",
+        )

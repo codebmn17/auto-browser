@@ -23,11 +23,13 @@ from .ocr import OCRExtractor
 from .session_store import DurableSessionStore
 from .session_isolation import DockerBrowserNodeProvisioner, IsolatedBrowserRuntime
 from .session_tunnel import IsolatedSessionTunnel, IsolatedSessionTunnelBroker
-from .stealth import apply_stealth, EXTRACT_POSTS_SCRIPT, EXTRACT_PROFILE_SCRIPT, SMOOTH_SCROLL_SCRIPT
 from .browser_scripts import (
     INTERACTABLES_SCRIPT,
     ACTIVE_ELEMENT_SCRIPT,
     PAGE_SUMMARY_SCRIPT,
+    EXTRACT_POSTS_SCRIPT,
+    EXTRACT_PROFILE_SCRIPT,
+    SMOOTH_SCROLL_SCRIPT,
     FIND_LIKE_BUTTON_SCRIPT,
     FIND_FOLLOW_BUTTON_SCRIPT,
     FIND_SEARCH_INPUT_SCRIPT,
@@ -410,7 +412,6 @@ class BrowserManager:
         request_proxy_username: str | None = None,
         request_proxy_password: str | None = None,
         user_agent: str | None = None,
-        stealth_enabled: bool = True,
     ) -> dict[str, Any]:
         if start_url:
             self._assert_url_allowed(start_url)
@@ -442,12 +443,11 @@ class BrowserManager:
         proxy_username = request_proxy_username or self.settings.default_proxy_username
         proxy_password = request_proxy_password or self.settings.default_proxy_password
 
-        # Slight viewport randomization to avoid consistent fingerprint
-        vw = self.settings.default_viewport_width + random.randint(-20, 20)
-        vh = self.settings.default_viewport_height + random.randint(-10, 10)
-
         context_kwargs: dict[str, Any] = {
-            "viewport": {"width": vw, "height": vh},
+            "viewport": {
+                "width": self.settings.default_viewport_width,
+                "height": self.settings.default_viewport_height,
+            },
             "accept_downloads": True,
         }
         if user_agent:
@@ -476,8 +476,6 @@ class BrowserManager:
 
             page = await context.new_page()
             page.set_default_timeout(self.settings.action_timeout_ms)
-            if stealth_enabled:
-                await apply_stealth(page)
             session = BrowserSession(
                 id=session_id,
                 name=name or f"session-{session_id}",
@@ -744,22 +742,14 @@ class BrowserManager:
             locator = session.page.locator(target["selector"]).first
             await locator.scroll_into_view_if_needed()
             await locator.click()
-            await asyncio.sleep(0.05 + random.random() * 0.1)
             if clear_first:
-                await session.page.keyboard.press("Control+a")
-                await asyncio.sleep(0.03)
-                await session.page.keyboard.press("Delete")
-                await asyncio.sleep(0.05)
-            for i, char in enumerate(text):
-                await session.page.keyboard.type(char)
-                # Variable delay: occasional thinking pause every ~6-10 chars
-                delay_ms = random.randint(
-                    self.settings.human_typing_min_delay_ms,
-                    self.settings.human_typing_max_delay_ms,
-                )
-                if i > 0 and i % random.randint(6, 12) == 0:
-                    delay_ms += random.randint(200, 600)
-                await asyncio.sleep(delay_ms / 1000)
+                try:
+                    await locator.fill(text)
+                except Exception:
+                    await session.page.keyboard.press("Control+A")
+                    await session.page.keyboard.type(text, delay=self.settings.typing_delay_ms)
+            else:
+                await session.page.keyboard.type(text, delay=self.settings.typing_delay_ms)
             await self._settle(session.page)
 
         return await self._run_action(
@@ -934,94 +924,159 @@ class BrowserManager:
 }
 """
 
-    async def post_content(self, session_id: str, text: str) -> dict[str, Any]:
+    async def post_content(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        approval_id: str | None = None,
+    ) -> dict[str, Any]:
         """Find a text composer on the current page and type + submit the post."""
         session = await self.get_session(session_id)
-
         composer_sel = await session.page.evaluate(self._FIND_COMPOSER_SCRIPT)
         if not composer_sel:
             return {"ok": False, "error": "No composer found on current page", "url": session.page.url}
 
-        # Click composer
-        locator = session.page.locator(composer_sel).first
-        await locator.scroll_into_view_if_needed()
-        await locator.click()
-        await asyncio.sleep(0.2 + random.random() * 0.15)
+        approval = await self._require_decision_approval(
+            session_id,
+            BrowserActionDecision(
+                action="social_post",
+                reason="Publish a social post",
+                text=text,
+                risk_category="post",
+            ),
+            approval_id=approval_id,
+            fallback_reason="Publishing a social post requires approval",
+        )
+        target: dict[str, Any] = {"selector": composer_sel, "text_preview": text[:160]}
 
-        # Type with human delays
-        for i, char in enumerate(text):
-            await session.page.keyboard.type(char)
-            delay_ms = random.randint(
-                self.settings.human_typing_min_delay_ms,
-                self.settings.human_typing_max_delay_ms,
-            )
-            if i > 0 and i % random.randint(6, 12) == 0:
-                delay_ms += random.randint(150, 500)
-            await asyncio.sleep(delay_ms / 1000)
-
-        await asyncio.sleep(0.4 + random.random() * 0.3)
-
-        # Find and click the submit button
-        submit_selectors = [
-            '[data-testid="tweetButtonInline"]',
-            '[data-testid="tweetButton"]',
-            'button[type="submit"]',
-            '[aria-label*="post" i][role="button"]',
-            '[aria-label*="tweet" i][role="button"]',
-            '[aria-label*="share" i][role="button"]',
-            'button:has-text("Post")',
-            'button:has-text("Tweet")',
-            'button:has-text("Share")',
-            'button:has-text("Submit")',
-        ]
-        submitted = False
-        for sel in submit_selectors:
+        async def operation() -> None:
+            locator = session.page.locator(composer_sel).first
+            await locator.scroll_into_view_if_needed()
+            await locator.click()
+            await asyncio.sleep(0.2 + random.random() * 0.15)
             try:
-                btn = session.page.locator(sel).first
-                if await btn.count() > 0 and await btn.is_visible():
-                    await btn.click()
-                    submitted = True
-                    break
+                await locator.fill("")
             except Exception:
-                continue
+                await session.page.keyboard.press("Control+A")
+                await asyncio.sleep(0.03)
+                await session.page.keyboard.press("Delete")
 
-        await self._settle(session.page)
-        before = {"url": session.page.url}
-        return {
-            "ok": submitted,
-            "composer_selector": composer_sel,
-            "submitted": submitted,
-            "url": session.page.url,
-            "before": before,
-        }
+            for i, char in enumerate(text):
+                await session.page.keyboard.type(char)
+                delay_ms = random.randint(
+                    self.settings.human_typing_min_delay_ms,
+                    self.settings.human_typing_max_delay_ms,
+                )
+                if i > 0 and i % random.randint(6, 12) == 0:
+                    delay_ms += random.randint(150, 500)
+                await asyncio.sleep(delay_ms / 1000)
 
-    async def like_post(self, session_id: str, post_index: int = 0) -> dict[str, Any]:
+            await asyncio.sleep(0.4 + random.random() * 0.3)
+
+            submit_selectors = [
+                '[data-testid="tweetButtonInline"]',
+                '[data-testid="tweetButton"]',
+                'button[type="submit"]',
+                '[aria-label*="post" i][role="button"]',
+                '[aria-label*="tweet" i][role="button"]',
+                '[aria-label*="share" i][role="button"]',
+                'button:has-text("Post")',
+                'button:has-text("Tweet")',
+                'button:has-text("Share")',
+                'button:has-text("Submit")',
+            ]
+            for sel in submit_selectors:
+                try:
+                    btn = session.page.locator(sel).first
+                    if await btn.count() > 0 and await btn.is_visible():
+                        target["submit_selector"] = sel
+                        await btn.click()
+                        await self._settle(session.page)
+                        return
+                except Exception:
+                    continue
+            raise PlaywrightError("No submit button found on current page")
+
+        result = await self._run_action(session, "social_post", target, operation)
+        if approval is not None:
+            await self.approvals.mark_executed(approval.id)
+        return result
+
+    async def like_post(
+        self,
+        session_id: str,
+        post_index: int = 0,
+        *,
+        approval_id: str | None = None,
+    ) -> dict[str, Any]:
         """Find and click the like/heart button for a visible post."""
         session = await self.get_session(session_id)
-        target = await session.page.evaluate(FIND_LIKE_BUTTON_SCRIPT, post_index)
-        if not target:
+        match = await session.page.evaluate(FIND_LIKE_BUTTON_SCRIPT, post_index)
+        if not match:
             return {"ok": False, "error": "No like button found on current page", "url": session.page.url}
-        await asyncio.sleep(0.1 + random.random() * 0.15)
-        await session.page.mouse.click(
-            target["x"] + random.randint(-2, 2),
-            target["y"] + random.randint(-2, 2),
-        )
-        await self._settle(session.page)
-        return {"ok": True, "clicked": target, "url": session.page.url}
 
-    async def follow_user(self, session_id: str) -> dict[str, Any]:
+        approval = await self._require_decision_approval(
+            session_id,
+            BrowserActionDecision(
+                action="social_like",
+                reason="Like the selected social post",
+                index=post_index,
+                risk_category="post",
+            ),
+            approval_id=approval_id,
+            fallback_reason="Liking a post requires approval",
+        )
+        target: dict[str, Any] = {**match, "post_index": post_index}
+
+        async def operation() -> None:
+            await asyncio.sleep(0.1 + random.random() * 0.15)
+            await session.page.mouse.click(
+                match["x"] + random.randint(-2, 2),
+                match["y"] + random.randint(-2, 2),
+            )
+            await self._settle(session.page)
+
+        result = await self._run_action(session, "like_post", target, operation)
+        if approval is not None:
+            await self.approvals.mark_executed(approval.id)
+        return result
+
+    async def follow_user(
+        self,
+        session_id: str,
+        *,
+        approval_id: str | None = None,
+    ) -> dict[str, Any]:
         """Find and click the Follow button on the current profile page."""
         session = await self.get_session(session_id)
-        target = await session.page.evaluate(FIND_FOLLOW_BUTTON_SCRIPT)
-        if not target:
+        match = await session.page.evaluate(FIND_FOLLOW_BUTTON_SCRIPT)
+        if not match:
             return {"ok": False, "error": "No follow button found — may already be following", "url": session.page.url}
-        await asyncio.sleep(0.15 + random.random() * 0.2)
-        await session.page.mouse.click(
-            target["x"] + random.randint(-2, 2),
-            target["y"] + random.randint(-2, 2),
+
+        approval = await self._require_decision_approval(
+            session_id,
+            BrowserActionDecision(
+                action="social_follow",
+                reason="Follow the current social profile",
+                risk_category="post",
+            ),
+            approval_id=approval_id,
+            fallback_reason="Following an account requires approval",
         )
-        await self._settle(session.page)
-        return {"ok": True, "clicked": target, "url": session.page.url}
+
+        async def operation() -> None:
+            await asyncio.sleep(0.15 + random.random() * 0.2)
+            await session.page.mouse.click(
+                match["x"] + random.randint(-2, 2),
+                match["y"] + random.randint(-2, 2),
+            )
+            await self._settle(session.page)
+
+        result = await self._run_action(session, "follow_user", match, operation)
+        if approval is not None:
+            await self.approvals.mark_executed(approval.id)
+        return result
 
     async def search_page(self, session_id: str, query: str) -> dict[str, Any]:
         """Find the search input on the current page and type a query."""
@@ -1029,21 +1084,25 @@ class BrowserManager:
         search_sel = await session.page.evaluate(FIND_SEARCH_INPUT_SCRIPT)
         if not search_sel:
             return {"ok": False, "error": "No search input found on current page", "url": session.page.url}
-        locator = session.page.locator(search_sel).first
-        await locator.click()
-        await asyncio.sleep(0.1 + random.random() * 0.1)
-        await session.page.keyboard.press("Control+a")
-        for i, char in enumerate(query):
-            await session.page.keyboard.type(char)
-            delay_ms = random.randint(
-                self.settings.human_typing_min_delay_ms,
-                self.settings.human_typing_max_delay_ms,
-            )
-            await asyncio.sleep(delay_ms / 1000)
-        await asyncio.sleep(0.2 + random.random() * 0.15)
-        await session.page.keyboard.press("Enter")
-        await self._settle(session.page)
-        return {"ok": True, "query": query, "selector": search_sel, "url": session.page.url}
+        target: dict[str, Any] = {"query": query, "selector": search_sel}
+
+        async def operation() -> None:
+            locator = session.page.locator(search_sel).first
+            await locator.click()
+            await asyncio.sleep(0.1 + random.random() * 0.1)
+            await session.page.keyboard.press("Control+A")
+            for char in query:
+                await session.page.keyboard.type(char)
+                delay_ms = random.randint(
+                    self.settings.human_typing_min_delay_ms,
+                    self.settings.human_typing_max_delay_ms,
+                )
+                await asyncio.sleep(delay_ms / 1000)
+            await asyncio.sleep(0.2 + random.random() * 0.15)
+            await session.page.keyboard.press("Enter")
+            await self._settle(session.page)
+
+        return await self._run_action(session, "search_page", target, operation)
 
     async def execute_decision(
         self,
@@ -1052,6 +1111,13 @@ class BrowserManager:
         *,
         approval_id: str | None = None,
     ) -> dict[str, Any]:
+        if decision.action == "social_post":
+            return await self.post_content(session_id, decision.text or "", approval_id=approval_id)
+        if decision.action == "social_like":
+            return await self.like_post(session_id, post_index=decision.index or 0, approval_id=approval_id)
+        if decision.action == "social_follow":
+            return await self.follow_user(session_id, approval_id=approval_id)
+
         approval = await self._require_decision_approval(
             session_id,
             decision,
@@ -1614,7 +1680,7 @@ class BrowserManager:
             verified = "url_changed" in signals or "title_changed" in signals
         elif action_name in {"go_back", "go_forward"}:
             verified = "url_changed" in signals or "title_changed" in signals
-        elif action_name in {"click", "press", "scroll"}:
+        elif action_name in {"click", "press", "scroll", "scroll_feed", "like_post", "follow_user"}:
             verified = bool(
                 {
                     "url_changed",
@@ -1629,7 +1695,7 @@ class BrowserManager:
             verified = bool(
                 {"active_element_changed", "text_excerpt_changed", "accessibility_focus_changed"} & set(signals)
             ) or target_seen_after is not None
-        elif action_name in {"type", "select_option"}:
+        elif action_name in {"type", "select_option", "social_post", "search_page"}:
             verified = bool({"active_element_changed", "text_excerpt_changed", "accessibility_focus_changed"} & set(signals))
         elif action_name in {"wait", "reload"}:
             verified = True
@@ -1775,7 +1841,17 @@ class BrowserManager:
 
     @staticmethod
     def _action_class(action_name: str) -> str:
-        if action_name in {"navigate", "hover", "scroll", "wait", "reload", "go_back", "go_forward"}:
+        if action_name in {
+            "navigate",
+            "hover",
+            "scroll",
+            "scroll_feed",
+            "wait",
+            "reload",
+            "go_back",
+            "go_forward",
+            "search_page",
+        }:
             return "read"
         return "write"
 

@@ -196,11 +196,9 @@ class Settings(BaseSettings):
     model_max_retries: int = Field(2, alias="MODEL_MAX_RETRIES")
     model_retry_backoff_seconds: float = Field(1.0, alias="MODEL_RETRY_BACKOFF_SECONDS")
 
-    # Stealth / antibot
-    stealth_enabled: bool = Field(True, alias="STEALTH_ENABLED")
+    # Interaction pacing
     human_typing_min_delay_ms: int = Field(40, alias="HUMAN_TYPING_MIN_DELAY_MS")
     human_typing_max_delay_ms: int = Field(130, alias="HUMAN_TYPING_MAX_DELAY_MS")
-    human_click_jitter_px: int = Field(4, alias="HUMAN_CLICK_JITTER_PX")
 
     # Proxy (session-level override supported in CreateSessionRequest)
     default_proxy_server: str | None = Field(None, alias="DEFAULT_PROXY_SERVER")

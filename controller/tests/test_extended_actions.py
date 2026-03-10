@@ -42,6 +42,19 @@ class BrowserActionDecisionExtendedTests(unittest.TestCase):
                 decision = BrowserActionDecision(action=action, reason=f"Run {action}")
                 self.assertEqual(decision.risk_category, "read")
 
+    def test_social_write_actions_default_to_post_risk(self) -> None:
+        post = BrowserActionDecision(action="social_post", reason="Share an update", text="hello world")
+        like = BrowserActionDecision(action="social_like", reason="Like the first post")
+        follow = BrowserActionDecision(action="social_follow", reason="Follow this profile")
+
+        self.assertEqual(post.risk_category, "post")
+        self.assertEqual(like.risk_category, "post")
+        self.assertEqual(follow.risk_category, "post")
+
+    def test_social_post_requires_text(self) -> None:
+        with self.assertRaises(ValidationError):
+            BrowserActionDecision(action="social_post", reason="Share an update")
+
 
 class FakeDownload:
     def __init__(self, suggested_filename: str, url: str, content: str = "downloaded") -> None:

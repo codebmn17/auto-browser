@@ -20,6 +20,8 @@ This scaffold gives you:
 - richer browser abilities through the shared action schema: **hover, select_option, wait, reload, back, forward**
 - **tab awareness and tab controls** for popup-heavy workflows
 - **download capture** with session-scoped files and URLs under `/artifacts`
+- optional **session-level proxy routing** and custom user agents for controlled network paths
+- **social page helpers** for feed scrolling, post/profile extraction, search, and approval-gated write actions
 - a browser-node managed **Playwright server endpoint** so the controller connects over Playwright protocol instead of CDP
 - optional **docker-ephemeral per-session browser isolation** with dedicated noVNC ports
 - a **real MCP JSON-RPC transport** at `/mcp`, plus convenience endpoints at `/mcp/tools` + `/mcp/tools/call`

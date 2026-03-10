@@ -13,7 +13,6 @@ class CreateSessionRequest(BaseModel):
     proxy_username: str | None = None
     proxy_password: str | None = None
     user_agent: str | None = None
-    stealth: bool = True
 
 
 class ClickRequest(BaseModel):
@@ -101,6 +100,9 @@ ActionName = Literal[
     "go_back",
     "go_forward",
     "upload",
+    "social_post",
+    "social_like",
+    "social_follow",
     "request_human_takeover",
     "done",
 ]
@@ -149,6 +151,8 @@ class BrowserActionDecision(BaseModel):
         if self.risk_category is None:
             if self.action in {"navigate", "hover", "scroll", "wait", "reload", "go_back", "go_forward", "done"}:
                 self.risk_category = "read"
+            elif self.action in {"social_post", "social_like", "social_follow"}:
+                self.risk_category = "post"
             elif self.action == "upload":
                 self.risk_category = "upload"
             elif self.action == "request_human_takeover":
@@ -166,11 +170,12 @@ class BrowserActionDecision(BaseModel):
                 raise ValueError("select_option requires element_id or selector")
             if self.value is None and self.label is None and self.index is None:
                 raise ValueError("select_option requires value, label, or index")
-        if self.action == "type":
+        if self.action in {"type", "social_post"}:
             if not has_locator_target:
-                raise ValueError("type requires element_id or selector")
+                if self.action == "type":
+                    raise ValueError("type requires element_id or selector")
             if not self.text:
-                raise ValueError("type requires text")
+                raise ValueError(f"{self.action} requires text")
         if self.action == "press" and not self.key:
             raise ValueError("press requires key")
         if self.action == "navigate" and not self.url:
@@ -180,7 +185,16 @@ class BrowserActionDecision(BaseModel):
                 raise ValueError("upload requires element_id or selector")
             if not self.file_path:
                 raise ValueError("upload requires file_path")
-        if self.action in {"done", "request_human_takeover", "wait", "reload", "go_back", "go_forward"}:
+        if self.action in {
+            "done",
+            "request_human_takeover",
+            "wait",
+            "reload",
+            "go_back",
+            "go_forward",
+            "social_like",
+            "social_follow",
+        }:
             return self
         return self
 
@@ -342,11 +356,16 @@ class SocialScrapeRequest(BaseModel):
 
 class SocialPostRequest(BaseModel):
     text: str = Field(min_length=1, max_length=5000)
-    image_path: str | None = None
+    approval_id: str | None = None
 
 
 class SocialLikeRequest(BaseModel):
     post_index: int = Field(default=0, ge=0, le=50)
+    approval_id: str | None = None
+
+
+class SocialFollowRequest(BaseModel):
+    approval_id: str | None = None
 
 
 class SocialSearchRequest(BaseModel):

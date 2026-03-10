@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 
 from pydantic import BaseModel, Field
 
@@ -17,9 +17,6 @@ from .models import (
     McpToolCallRequest,
     McpToolCallResponse,
     McpToolDescriptor,
-    SocialScrollRequest,
-    SocialScrapeRequest,
-    SocialPostRequest,
 )
 
 
@@ -95,7 +92,7 @@ class QueueAgentRunInput(SessionIdInput):
 
 
 class SocialScrollInput(SessionIdInput):
-    direction: str = "down"
+    direction: Literal["down", "up"] = "down"
     screens: int = Field(default=3, ge=1, le=20)
 
 
@@ -105,11 +102,16 @@ class SocialScrapeInput(SessionIdInput):
 
 class SocialPostInput(SessionIdInput):
     text: str = Field(min_length=1, max_length=5000)
-    image_path: str | None = None
+    approval_id: str | None = None
 
 
 class SocialLikeInput(SessionIdInput):
     post_index: int = Field(default=0, ge=0, le=50)
+    approval_id: str | None = None
+
+
+class SocialFollowInput(SessionIdInput):
+    approval_id: str | None = None
 
 
 class SocialSearchInput(SessionIdInput):
@@ -286,22 +288,29 @@ class McpToolGateway:
                     name="social.post",
                     description=(
                         "Find the text composer on the current page (tweet box, post field, comment box) "
-                        "and type + submit the provided text with human-like delays. "
-                        "Navigate to the platform first, then call this tool."
+                        "and type + submit the provided text. Navigate to the platform first. "
+                        "If approval_id is omitted, this returns an approval_required error."
                     ),
                     input_model=SocialPostInput,
                     handler=self._social_post,
                 ),
                 ToolSpec(
                     name="social.like",
-                    description="Find and click the like/heart button for a visible post. Use post_index to target a specific post (0 = first).",
+                    description=(
+                        "Find and click the like/heart button for a visible post. "
+                        "Use post_index to target a specific post (0 = first). "
+                        "If approval_id is omitted, this returns an approval_required error."
+                    ),
                     input_model=SocialLikeInput,
                     handler=self._social_like,
                 ),
                 ToolSpec(
                     name="social.follow",
-                    description="Find and click the Follow button on the current profile page.",
-                    input_model=SessionIdInput,
+                    description=(
+                        "Find and click the Follow button on the current profile page. "
+                        "If approval_id is omitted, this returns an approval_required error."
+                    ),
+                    input_model=SocialFollowInput,
                     handler=self._social_follow,
                 ),
                 ToolSpec(
@@ -363,7 +372,6 @@ class McpToolGateway:
             request_proxy_username=payload.proxy_username,
             request_proxy_password=payload.proxy_password,
             user_agent=payload.user_agent,
-            stealth_enabled=payload.stealth,
         )
 
     async def _list_sessions(self, _: EmptyInput) -> list[dict[str, Any]]:
@@ -452,13 +460,21 @@ class McpToolGateway:
         return await self.manager.extract_profile(payload.session_id)
 
     async def _social_post(self, payload: SocialPostInput) -> dict[str, Any]:
-        return await self.manager.post_content(payload.session_id, text=payload.text)
+        return await self.manager.post_content(
+            payload.session_id,
+            text=payload.text,
+            approval_id=payload.approval_id,
+        )
 
     async def _social_like(self, payload: SocialLikeInput) -> dict[str, Any]:
-        return await self.manager.like_post(payload.session_id, post_index=payload.post_index)
+        return await self.manager.like_post(
+            payload.session_id,
+            post_index=payload.post_index,
+            approval_id=payload.approval_id,
+        )
 
-    async def _social_follow(self, payload: SessionIdInput) -> dict[str, Any]:
-        return await self.manager.follow_user(payload.session_id)
+    async def _social_follow(self, payload: SocialFollowInput) -> dict[str, Any]:
+        return await self.manager.follow_user(payload.session_id, approval_id=payload.approval_id)
 
     async def _social_search(self, payload: SocialSearchInput) -> dict[str, Any]:
         return await self.manager.search_page(payload.session_id, query=payload.query)
