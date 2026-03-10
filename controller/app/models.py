@@ -345,4 +345,12 @@ class SocialPostRequest(BaseModel):
     image_path: str | None = None
 
 
+class SocialLikeRequest(BaseModel):
+    post_index: int = Field(default=0, ge=0, le=50)
+
+
+class SocialSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+
+
 BROWSER_ACTION_SCHEMA = BrowserActionDecision.model_json_schema()

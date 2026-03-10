@@ -108,6 +108,14 @@ class SocialPostInput(SessionIdInput):
     image_path: str | None = None
 
 
+class SocialLikeInput(SessionIdInput):
+    post_index: int = Field(default=0, ge=0, le=50)
+
+
+class SocialSearchInput(SessionIdInput):
+    query: str = Field(min_length=1, max_length=500)
+
+
 @dataclass
 class ToolSpec:
     name: str
@@ -284,6 +292,24 @@ class McpToolGateway:
                     input_model=SocialPostInput,
                     handler=self._social_post,
                 ),
+                ToolSpec(
+                    name="social.like",
+                    description="Find and click the like/heart button for a visible post. Use post_index to target a specific post (0 = first).",
+                    input_model=SocialLikeInput,
+                    handler=self._social_like,
+                ),
+                ToolSpec(
+                    name="social.follow",
+                    description="Find and click the Follow button on the current profile page.",
+                    input_model=SessionIdInput,
+                    handler=self._social_follow,
+                ),
+                ToolSpec(
+                    name="social.search",
+                    description="Find the search input on the current page and type a query, then press Enter.",
+                    input_model=SocialSearchInput,
+                    handler=self._social_search,
+                ),
             ]
         }
 
@@ -427,3 +453,12 @@ class McpToolGateway:
 
     async def _social_post(self, payload: SocialPostInput) -> dict[str, Any]:
         return await self.manager.post_content(payload.session_id, text=payload.text)
+
+    async def _social_like(self, payload: SocialLikeInput) -> dict[str, Any]:
+        return await self.manager.like_post(payload.session_id, post_index=payload.post_index)
+
+    async def _social_follow(self, payload: SessionIdInput) -> dict[str, Any]:
+        return await self.manager.follow_user(payload.session_id)
+
+    async def _social_search(self, payload: SocialSearchInput) -> dict[str, Any]:
+        return await self.manager.search_page(payload.session_id, query=payload.query)

@@ -24,137 +24,16 @@ from .session_store import DurableSessionStore
 from .session_isolation import DockerBrowserNodeProvisioner, IsolatedBrowserRuntime
 from .session_tunnel import IsolatedSessionTunnel, IsolatedSessionTunnelBroker
 from .stealth import apply_stealth, EXTRACT_POSTS_SCRIPT, EXTRACT_PROFILE_SCRIPT, SMOOTH_SCROLL_SCRIPT
+from .browser_scripts import (
+    INTERACTABLES_SCRIPT,
+    ACTIVE_ELEMENT_SCRIPT,
+    PAGE_SUMMARY_SCRIPT,
+    FIND_LIKE_BUTTON_SCRIPT,
+    FIND_FOLLOW_BUTTON_SCRIPT,
+    FIND_SEARCH_INPUT_SCRIPT,
+)
 
 logger = logging.getLogger(__name__)
-
-INTERACTABLES_SCRIPT = r"""
-(limit) => {
-  function isVisible(el) {
-    const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-  }
-
-  function getLabel(el) {
-    const raw = el.getAttribute('aria-label')
-      || el.getAttribute('placeholder')
-      || el.innerText
-      || el.value
-      || el.getAttribute('name')
-      || el.id
-      || el.href
-      || '';
-    return String(raw).replace(/\s+/g, ' ').trim().slice(0, 160);
-  }
-
-  const selector = [
-    'a',
-    'button',
-    'input',
-    'textarea',
-    'select',
-    '[role="button"]',
-    '[role="link"]',
-    '[role="textbox"]',
-    '[contenteditable="true"]',
-    '[tabindex]'
-  ].join(',');
-
-  const out = [];
-  for (const el of document.querySelectorAll(selector)) {
-    if (!isVisible(el) || el.closest('[aria-hidden="true"]')) continue;
-    if (!el.dataset.operatorId) {
-      el.dataset.operatorId = `op-${Math.random().toString(36).slice(2, 10)}`;
-    }
-    const rect = el.getBoundingClientRect();
-    out.push({
-      element_id: el.dataset.operatorId,
-      selector_hint: `[data-operator-id="${el.dataset.operatorId}"]`,
-      tag: el.tagName.toLowerCase(),
-      type: el.getAttribute('type'),
-      role: el.getAttribute('role') || el.tagName.toLowerCase(),
-      label: getLabel(el),
-      disabled: Boolean(el.disabled || el.getAttribute('aria-disabled') === 'true'),
-      href: el.href || null,
-      bbox: {
-        x: Math.round(rect.x),
-        y: Math.round(rect.y),
-        width: Math.round(rect.width),
-        height: Math.round(rect.height)
-      }
-    });
-    if (out.length >= limit) break;
-  }
-  return out;
-}
-"""
-
-ACTIVE_ELEMENT_SCRIPT = r"""
-() => {
-  const el = document.activeElement;
-  if (!el) return null;
-  return {
-    tag: el.tagName.toLowerCase(),
-    element_id: el.dataset?.operatorId || null,
-    name: el.getAttribute('name'),
-    id: el.id || null,
-    label: (el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.innerText || el.value || '').toString().replace(/\s+/g, ' ').trim().slice(0, 120)
-  };
-}
-"""
-
-PAGE_SUMMARY_SCRIPT = r"""
-(textLimit) => {
-  const squash = (value, maxLength = textLimit) =>
-    String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
-
-  const headings = Array.from(document.querySelectorAll('h1,h2,h3'))
-    .slice(0, 8)
-    .map((el) => ({
-      level: el.tagName.toLowerCase(),
-      text: squash(el.innerText, 160)
-    }))
-    .filter((item) => item.text);
-
-  const forms = Array.from(document.forms)
-    .slice(0, 3)
-    .map((form) => ({
-      action: form.getAttribute('action') || null,
-      method: (form.getAttribute('method') || 'get').toLowerCase(),
-      fields: Array.from(form.querySelectorAll('input, textarea, select, button'))
-        .slice(0, 8)
-        .map((field) => ({
-          tag: field.tagName.toLowerCase(),
-          type: field.getAttribute('type') || null,
-          name: field.getAttribute('name') || null,
-          label: squash(
-            field.getAttribute('aria-label')
-              || field.getAttribute('placeholder')
-              || field.innerText
-              || field.value
-              || field.getAttribute('name')
-              || field.id,
-            80
-          ),
-          disabled: Boolean(field.disabled || field.getAttribute('aria-disabled') === 'true')
-        }))
-    }));
-
-  return {
-    text_excerpt: squash(document.body?.innerText || '', textLimit),
-    dom_outline: {
-      headings,
-      forms,
-      counts: {
-        links: document.querySelectorAll('a').length,
-        buttons: document.querySelectorAll('button, [role=\"button\"]').length,
-        inputs: document.querySelectorAll('input, textarea, select').length,
-        forms: document.forms.length
-      }
-    }
-  };
-}
-"""
 
 ACCESSIBILITY_NODE_LIMIT = 30
 
@@ -1115,6 +994,56 @@ class BrowserManager:
             "url": session.page.url,
             "before": before,
         }
+
+    async def like_post(self, session_id: str, post_index: int = 0) -> dict[str, Any]:
+        """Find and click the like/heart button for a visible post."""
+        session = await self.get_session(session_id)
+        target = await session.page.evaluate(FIND_LIKE_BUTTON_SCRIPT, post_index)
+        if not target:
+            return {"ok": False, "error": "No like button found on current page", "url": session.page.url}
+        await asyncio.sleep(0.1 + random.random() * 0.15)
+        await session.page.mouse.click(
+            target["x"] + random.randint(-2, 2),
+            target["y"] + random.randint(-2, 2),
+        )
+        await self._settle(session.page)
+        return {"ok": True, "clicked": target, "url": session.page.url}
+
+    async def follow_user(self, session_id: str) -> dict[str, Any]:
+        """Find and click the Follow button on the current profile page."""
+        session = await self.get_session(session_id)
+        target = await session.page.evaluate(FIND_FOLLOW_BUTTON_SCRIPT)
+        if not target:
+            return {"ok": False, "error": "No follow button found — may already be following", "url": session.page.url}
+        await asyncio.sleep(0.15 + random.random() * 0.2)
+        await session.page.mouse.click(
+            target["x"] + random.randint(-2, 2),
+            target["y"] + random.randint(-2, 2),
+        )
+        await self._settle(session.page)
+        return {"ok": True, "clicked": target, "url": session.page.url}
+
+    async def search_page(self, session_id: str, query: str) -> dict[str, Any]:
+        """Find the search input on the current page and type a query."""
+        session = await self.get_session(session_id)
+        search_sel = await session.page.evaluate(FIND_SEARCH_INPUT_SCRIPT)
+        if not search_sel:
+            return {"ok": False, "error": "No search input found on current page", "url": session.page.url}
+        locator = session.page.locator(search_sel).first
+        await locator.click()
+        await asyncio.sleep(0.1 + random.random() * 0.1)
+        await session.page.keyboard.press("Control+a")
+        for i, char in enumerate(query):
+            await session.page.keyboard.type(char)
+            delay_ms = random.randint(
+                self.settings.human_typing_min_delay_ms,
+                self.settings.human_typing_max_delay_ms,
+            )
+            await asyncio.sleep(delay_ms / 1000)
+        await asyncio.sleep(0.2 + random.random() * 0.15)
+        await session.page.keyboard.press("Enter")
+        await self._settle(session.page)
+        return {"ok": True, "query": query, "selector": search_sel, "url": session.page.url}
 
     async def execute_decision(
         self,

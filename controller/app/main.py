@@ -32,6 +32,8 @@ from .models import (
     SocialScrollRequest,
     SocialScrapeRequest,
     SocialPostRequest,
+    SocialLikeRequest,
+    SocialSearchRequest,
     TabIndexRequest,
     TypeRequest,
     UploadRequest,
@@ -575,6 +577,30 @@ async def social_extract_profile(session_id: str) -> dict:
 async def social_post(session_id: str, payload: SocialPostRequest) -> dict:
     try:
         return await manager.post_content(session_id, text=payload.text)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+
+
+@app.post("/sessions/{session_id}/social/like")
+async def social_like(session_id: str, payload: SocialLikeRequest) -> dict:
+    try:
+        return await manager.like_post(session_id, post_index=payload.post_index)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+
+
+@app.post("/sessions/{session_id}/social/follow")
+async def social_follow(session_id: str) -> dict:
+    try:
+        return await manager.follow_user(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+
+
+@app.post("/sessions/{session_id}/social/search")
+async def social_search(session_id: str, payload: SocialSearchRequest) -> dict:
+    try:
+        return await manager.search_page(session_id, query=payload.query)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
 
