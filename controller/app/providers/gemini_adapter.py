@@ -32,6 +32,12 @@ class GeminiAdapter(BaseProviderAdapter):
     def auth_mode(self) -> str:
         return self.normalize_auth_mode(self.settings.gemini_auth_mode)
 
+    @property
+    def login_command(self) -> str | None:
+        if self.auth_mode == "cli":
+            return self.settings.gemini_cli_path or "gemini"
+        return None
+
     def _readiness(self) -> tuple[bool, str]:
         if not self.auth_mode_supported(self.auth_mode):
             return False, self.invalid_auth_mode_detail(self.auth_mode)

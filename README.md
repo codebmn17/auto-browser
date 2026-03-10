@@ -17,6 +17,9 @@ This scaffold gives you:
 - optional **SQLite backing** for approvals + audit events
 - provider adapters for **OpenAI, Claude, and Gemini** behind one internal action schema
 - one-step and multi-step **agent orchestration endpoints**
+- richer browser abilities through the shared action schema: **hover, select_option, wait, reload, back, forward**
+- **tab awareness and tab controls** for popup-heavy workflows
+- **download capture** with session-scoped files and URLs under `/artifacts`
 - a browser-node managed **Playwright server endpoint** so the controller connects over Playwright protocol instead of CDP
 - optional **docker-ephemeral per-session browser isolation** with dedicated noVNC ports
 - a **real MCP JSON-RPC transport** at `/mcp`, plus convenience endpoints at `/mcp/tools` + `/mcp/tools/call`
@@ -116,6 +119,16 @@ rsync -a ~/.claude data/cli-home/.claude
 rsync -a ~/.gemini data/cli-home/.gemini
 ```
 
+If you just want to sign in interactively on this host, use the included bootstrap helper instead. It opens the CLI inside the controller image with `HOME=/data/cli-home`, so the login state lands exactly where Auto Browser expects it:
+
+```bash
+./scripts/bootstrap_cli_auth.sh codex
+./scripts/bootstrap_cli_auth.sh claude
+./scripts/bootstrap_cli_auth.sh gemini
+# or
+./scripts/bootstrap_cli_auth.sh all
+```
+
 If this box already has those subscription logins locally, the smoother path is to mount the real host homes read-only at their native paths instead of copying caches around:
 
 ```bash
@@ -192,6 +205,23 @@ API_PORT=8010 NOVNC_PORT=6081 VNC_PORT=5901 \
 TAKEOVER_URL='http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=scale' \
 docker compose up --build
 ```
+
+### Shared action schema and download API
+
+Beyond the convenience routes (`/actions/click`, `/actions/type`, etc.), the controller now exposes:
+
+- `POST /sessions/{session_id}/actions/execute`
+  - accepts the full shared `BrowserActionDecision` schema
+  - supports `hover`, `select_option`, `wait`, `reload`, `go_back`, and `go_forward`
+- `GET /sessions/{session_id}/tabs`
+  - lists the currently open pages in the session
+- `POST /sessions/{session_id}/tabs/activate`
+  - makes a tab the primary page for future observations/actions
+- `POST /sessions/{session_id}/tabs/close`
+  - closes a tab by index and rebinds the session to the active tab
+- `GET /sessions/{session_id}/downloads`
+  - lists files captured for that session
+  - download files are saved under the session artifact tree and served from `/artifacts/...`
 
 ### Reverse SSH remote access
 

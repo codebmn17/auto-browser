@@ -22,12 +22,14 @@ from .models import (
     AgentStepRequest,
     ClickRequest,
     CreateSessionRequest,
+    ExecuteActionRequest,
     HumanTakeoverRequest,
     McpToolCallRequest,
     NavigateRequest,
     PressRequest,
     SaveStorageStateRequest,
     ScrollRequest,
+    TabIndexRequest,
     TypeRequest,
     UploadRequest,
 )
@@ -386,6 +388,42 @@ async def observe(session_id: str, limit: int = 40) -> dict:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
 
 
+@app.get("/sessions/{session_id}/downloads")
+async def list_downloads(session_id: str) -> list[dict]:
+    try:
+        return await manager.list_downloads(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+
+
+@app.get("/sessions/{session_id}/tabs")
+async def list_tabs(session_id: str) -> list[dict]:
+    try:
+        return await manager.list_tabs(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+
+
+@app.post("/sessions/{session_id}/tabs/activate")
+async def activate_tab(session_id: str, payload: TabIndexRequest) -> dict:
+    try:
+        return await manager.activate_tab(session_id, payload.index)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/sessions/{session_id}/tabs/close")
+async def close_tab(session_id: str, payload: TabIndexRequest) -> dict:
+    try:
+        return await manager.close_tab(session_id, payload.index)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/sessions/{session_id}/actions/navigate")
 async def navigate(session_id: str, payload: NavigateRequest) -> dict:
     try:
@@ -458,6 +496,24 @@ async def scroll(session_id: str, payload: ScrollRequest) -> dict:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.post("/sessions/{session_id}/actions/execute")
+async def execute_action(session_id: str, payload: ExecuteActionRequest) -> dict:
+    try:
+        return await manager.execute_decision(
+            session_id,
+            payload.action,
+            approval_id=payload.approval_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ApprovalRequiredError as exc:
+        raise HTTPException(status_code=409, detail=exc.payload) from exc
 
 
 @app.post("/sessions/{session_id}/actions/upload")

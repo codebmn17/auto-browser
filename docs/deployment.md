@@ -78,6 +78,16 @@ rsync -a ~/.gemini data/cli-home/.gemini
 
 Treat `data/cli-home` like a password vault. Never commit it.
 
+If the easiest path is to sign in on the target box directly, use:
+
+```bash
+./scripts/bootstrap_cli_auth.sh codex
+./scripts/bootstrap_cli_auth.sh claude
+./scripts/bootstrap_cli_auth.sh gemini
+```
+
+That opens the provider CLI inside the controller image with `HOME=/data/cli-home`, so the resulting login state is already in the right place for `*_AUTH_MODE=cli`.
+
 If the target machine already has those subscription logins locally, prefer the host-mount override instead of copying caches:
 
 ```bash

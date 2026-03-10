@@ -32,6 +32,12 @@ class ClaudeAdapter(BaseProviderAdapter):
     def auth_mode(self) -> str:
         return self.normalize_auth_mode(self.settings.claude_auth_mode)
 
+    @property
+    def login_command(self) -> str | None:
+        if self.auth_mode == "cli":
+            return self.settings.claude_cli_path or "claude"
+        return None
+
     def _readiness(self) -> tuple[bool, str]:
         if not self.auth_mode_supported(self.auth_mode):
             return False, self.invalid_auth_mode_detail(self.auth_mode)

@@ -19,6 +19,18 @@ smoke-isolation-tunnel:
 smoke-reverse-ssh:
 	./scripts/smoke_reverse_ssh.sh
 
+bootstrap-codex-auth:
+	./scripts/bootstrap_cli_auth.sh codex
+
+bootstrap-claude-auth:
+	./scripts/bootstrap_cli_auth.sh claude
+
+bootstrap-gemini-auth:
+	./scripts/bootstrap_cli_auth.sh gemini
+
+bootstrap-all-auth:
+	./scripts/bootstrap_cli_auth.sh all
+
 down:
 	docker compose down
 

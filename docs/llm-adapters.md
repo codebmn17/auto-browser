@@ -7,9 +7,15 @@ The browser harness is now **model-agnostic** and has a real orchestrator.
 Every provider adapter returns the same internal decision schema:
 - `navigate`
 - `click`
+- `hover`
+- `select_option`
 - `type`
 - `press`
 - `scroll`
+- `wait`
+- `reload`
+- `go_back`
+- `go_forward`
 - `upload`
 - `request_human_takeover`
 - `done`
@@ -108,10 +114,11 @@ If a provider still proposes a sensitive side effect, the controller does not tr
 - Provider calls are synchronous HTTP requests in the API process.
 - Provider HTTP calls now retry `429` and `5xx` responses with exponential backoff using `MODEL_MAX_RETRIES` and `MODEL_RETRY_BACKOFF_SECONDS`.
 - Live provider execution depends on either provider API keys or mounted CLI auth state under `CLI_HOME`.
+- Session observations now also include `tabs` and `recent_downloads`, so providers can follow popup flows and stop after a file lands or an export completes.
 
 ## Next production upgrades
 
 - switch OpenAI from Chat Completions to Responses API if you want one modern multimodal path everywhere
 - move provider calls into a queue/worker tier
 - add retry / loop detection policies
-- add MCP tool wrapping so external agents can call this controller as a shared browser tool
+- add streaming/SSE on top of the current REST + MCP surfaces when clients need server-pushed events

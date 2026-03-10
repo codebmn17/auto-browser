@@ -27,6 +27,7 @@ class ProviderRegistry:
                     model=adapter.default_model,
                     auth_mode=adapter.auth_mode,
                     detail=adapter.readiness_detail,
+                    login_command=adapter.login_command,
                 )
             )
         return infos

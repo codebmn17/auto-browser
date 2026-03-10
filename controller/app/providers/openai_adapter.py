@@ -43,6 +43,12 @@ class OpenAIAdapter(BaseProviderAdapter):
     def auth_mode(self) -> str:
         return self.normalize_auth_mode(self.settings.openai_auth_mode)
 
+    @property
+    def login_command(self) -> str | None:
+        if self.auth_mode in {"cli", "host_bridge"}:
+            return self.settings.openai_cli_path or "codex"
+        return None
+
     def _readiness(self) -> tuple[bool, str]:
         if not self.auth_mode_supported(self.auth_mode):
             return False, self.invalid_auth_mode_detail(self.auth_mode)

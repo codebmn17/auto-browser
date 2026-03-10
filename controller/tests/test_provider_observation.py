@@ -41,6 +41,10 @@ class ProviderObservationTests(unittest.TestCase):
             "console_messages": [],
             "page_errors": [],
             "request_failures": [],
+            "tabs": [
+                {"index": 0, "active": True, "url": "https://example.com", "title": "Example Domain"},
+                {"index": 1, "active": False, "url": "https://example.com/export", "title": "Export"},
+            ],
             "takeover_url": "http://127.0.0.1:6080/vnc.html",
         }
 
@@ -50,4 +54,5 @@ class ProviderObservationTests(unittest.TestCase):
         self.assertIn("headings", compact["dom_outline"])
         self.assertTrue(compact["accessibility_outline"]["available"])
         self.assertTrue(compact["ocr"]["available"])
+        self.assertEqual(len(compact["tabs"]), 2)
         self.assertNotIn("ignored", compact["interactables"][0])

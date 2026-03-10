@@ -132,6 +132,30 @@ class BrowserOrchestrator:
             )
             steps.append(step_result)
             model_name = step_result.model
+            if self._should_trigger_loop_takeover(steps):
+                takeover_reason = "Agent loop guard triggered after repeated low-progress actions"
+                execution = await self.manager.request_human_takeover(session_id, reason=takeover_reason)
+                steps.append(
+                    AgentStepResult(
+                        provider=provider_name,
+                        model=model_name,
+                        goal=goal,
+                        status="takeover",
+                        observation=step_result.observation,
+                        decision={
+                            "action": "request_human_takeover",
+                            "reason": takeover_reason,
+                            "risk_category": "write",
+                        },
+                        execution=execution,
+                        usage=None,
+                        raw_text=None,
+                        error=None,
+                        error_code=None,
+                    )
+                )
+                final_status = "takeover"
+                break
             if step_result.status in {"done", "takeover", "approval_required", "error"}:
                 final_status = step_result.status
                 break
@@ -168,7 +192,20 @@ class BrowserOrchestrator:
         elif decision.action == "request_human_takeover":
             execution = await self.manager.request_human_takeover(session_id, reason=decision.reason)
             status = "takeover"
-        elif decision.action in {"navigate", "click", "type", "press", "scroll", "upload"}:
+        elif decision.action in {
+            "navigate",
+            "click",
+            "hover",
+            "select_option",
+            "type",
+            "press",
+            "scroll",
+            "wait",
+            "reload",
+            "go_back",
+            "go_forward",
+            "upload",
+        }:
             execution = await self.manager.execute_decision(
                 session_id,
                 decision,
@@ -209,6 +246,50 @@ class BrowserOrchestrator:
                 }
             )
         return summary
+
+    @classmethod
+    def _should_trigger_loop_takeover(cls, steps: list[AgentStepResult]) -> bool:
+        window = steps[-3:]
+        if len(window) < 3:
+            return False
+        if any(step.status != "acted" for step in window):
+            return False
+        if any(not cls._is_low_progress_step(step) for step in window):
+            return False
+        signatures = {cls._action_signature(step) for step in window}
+        return len(signatures) == 1
+
+    @staticmethod
+    def _action_signature(step: AgentStepResult) -> tuple[Any, ...]:
+        decision = step.decision or {}
+        return (
+            decision.get("action"),
+            decision.get("element_id"),
+            decision.get("selector"),
+            decision.get("url"),
+            decision.get("text"),
+            decision.get("key"),
+            decision.get("delta_x"),
+            decision.get("delta_y"),
+            decision.get("wait_ms"),
+        )
+
+    @staticmethod
+    def _is_low_progress_step(step: AgentStepResult) -> bool:
+        execution = step.execution if isinstance(step.execution, dict) else {}
+        verification = execution.get("verification") if isinstance(execution, dict) else {}
+        if isinstance(verification, dict) and verification.get("verified") is False:
+            return True
+
+        before = execution.get("before") if isinstance(execution, dict) else {}
+        after = execution.get("after") if isinstance(execution, dict) else {}
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            return False
+        return (
+            before.get("url") == after.get("url")
+            and before.get("title") == after.get("title")
+            and before.get("text_excerpt") == after.get("text_excerpt")
+        )
 
     async def _append_agent_log(self, session_id: str, filename: str, payload: dict[str, Any]) -> None:
         session = await self.manager.get_session(session_id)

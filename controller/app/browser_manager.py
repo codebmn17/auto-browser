@@ -181,6 +181,8 @@ class BrowserSession:
     console_messages: list[dict[str, Any]] = field(default_factory=list)
     page_errors: list[str] = field(default_factory=list)
     request_failures: list[dict[str, Any]] = field(default_factory=list)
+    downloads: list[dict[str, Any]] = field(default_factory=list)
+    attached_pages: set[int] = field(default_factory=set)
     last_action: str | None = None
     last_auth_state_path: Path | None = None
     tunnel_error: str | None = None
@@ -542,6 +544,7 @@ class BrowserManager:
         session_id = uuid4().hex[:12]
         artifact_dir = Path(self.settings.artifact_root) / session_id
         artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "downloads").mkdir(parents=True, exist_ok=True)
         auth_dir = self._session_auth_root(session_id)
         upload_dir = self._session_upload_root(session_id)
         auth_dir.mkdir(parents=True, exist_ok=True)
@@ -593,6 +596,8 @@ class BrowserManager:
                 last_auth_state_path=source_path if storage_state_path else None,
             )
             self._attach_page_listeners(page, session)
+            if hasattr(context, "on"):
+                context.on("page", lambda popup: self._attach_page_listeners(popup, session))
             self.sessions[session_id] = session
 
             if start_url:
@@ -766,6 +771,60 @@ class BrowserManager:
 
         return await self._run_action(session, "click", target, operation)
 
+    async def hover(
+        self,
+        session_id: str,
+        *,
+        selector: str | None = None,
+        element_id: str | None = None,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+        target = self._resolve_target(selector=selector, element_id=element_id, x=x, y=y)
+
+        async def operation() -> None:
+            if target["mode"] == "coordinates":
+                await session.page.mouse.move(float(x), float(y))
+            else:
+                locator = session.page.locator(target["selector"]).first
+                await locator.scroll_into_view_if_needed()
+                await locator.hover()
+            await self._settle(session.page)
+
+        return await self._run_action(session, "hover", target, operation)
+
+    async def select_option(
+        self,
+        session_id: str,
+        *,
+        selector: str | None = None,
+        element_id: str | None = None,
+        value: str | None = None,
+        label: str | None = None,
+        index: int | None = None,
+    ) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+        target = self._resolve_target(selector=selector, element_id=element_id)
+
+        async def operation() -> None:
+            locator = session.page.locator(target["selector"]).first
+            await locator.scroll_into_view_if_needed()
+            if index is not None:
+                await locator.select_option(index=index)
+            elif value is not None:
+                await locator.select_option(value=value)
+            else:
+                await locator.select_option(label=label)
+            await self._settle(session.page)
+
+        return await self._run_action(
+            session,
+            "select_option",
+            {**target, "value": value, "label": label, "index": index},
+            operation,
+        )
+
     async def type(
         self,
         session_id: str,
@@ -822,6 +881,97 @@ class BrowserManager:
             operation,
         )
 
+    async def wait(self, session_id: str, wait_ms: int) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+
+        async def operation() -> None:
+            await asyncio.sleep(max(0, wait_ms) / 1000)
+
+        return await self._run_action(session, "wait", {"wait_ms": wait_ms}, operation)
+
+    async def reload(self, session_id: str) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+
+        async def operation() -> None:
+            await session.page.reload(wait_until="domcontentloaded")
+            await self._settle(session.page)
+
+        return await self._run_action(session, "reload", {}, operation)
+
+    async def go_back(self, session_id: str) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+
+        async def operation() -> None:
+            await session.page.go_back(wait_until="domcontentloaded")
+            await self._settle(session.page)
+
+        return await self._run_action(session, "go_back", {}, operation)
+
+    async def go_forward(self, session_id: str) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+
+        async def operation() -> None:
+            await session.page.go_forward(wait_until="domcontentloaded")
+            await self._settle(session.page)
+
+        return await self._run_action(session, "go_forward", {}, operation)
+
+    async def list_tabs(self, session_id: str) -> list[dict[str, Any]]:
+        session = await self.get_session(session_id)
+        async with session.lock:
+            return await self._tab_summaries(session)
+
+    async def activate_tab(self, session_id: str, index: int) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+        async with session.lock:
+            pages = self._tab_pages(session)
+            if index < 0 or index >= len(pages):
+                raise ValueError(f"Unknown tab index: {index}")
+            target_page = pages[index]
+            self._attach_page_listeners(target_page, session)
+            if hasattr(target_page, "bring_to_front"):
+                await target_page.bring_to_front()
+            session.page = target_page
+            await self._settle(session.page)
+            await self._persist_session(session, status="active")
+            return {
+                "index": index,
+                "session": await self._session_summary(session),
+                "tabs": await self._tab_summaries(session),
+            }
+
+    async def close_tab(self, session_id: str, index: int) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+        async with session.lock:
+            pages = self._tab_pages(session)
+            if index < 0 or index >= len(pages):
+                raise ValueError(f"Unknown tab index: {index}")
+            if len(pages) == 1:
+                raise ValueError("Cannot close the only open tab in a session")
+            target_page = pages[index]
+            was_active = target_page is session.page
+            await target_page.close()
+            remaining = self._tab_pages(session)
+            if was_active and remaining:
+                session.page = remaining[max(0, min(index, len(remaining) - 1))]
+                self._attach_page_listeners(session.page, session)
+                if hasattr(session.page, "bring_to_front"):
+                    await session.page.bring_to_front()
+                await self._settle(session.page)
+            await self._persist_session(session, status="active")
+            return {
+                "closed_index": index,
+                "session": await self._session_summary(session),
+                "tabs": await self._tab_summaries(session),
+            }
+
+    async def list_downloads(self, session_id: str) -> list[dict[str, Any]]:
+        session = self.sessions.get(session_id)
+        if session is not None:
+            return list(session.downloads)
+        record = await self.session_store.get(session_id)
+        return list(record.downloads)
+
     async def execute_decision(
         self,
         session_id: str,
@@ -845,6 +995,23 @@ class BrowserManager:
                 x=decision.x,
                 y=decision.y,
             )
+        elif decision.action == "hover":
+            result = await self.hover(
+                session_id,
+                selector=decision.selector,
+                element_id=decision.element_id,
+                x=decision.x,
+                y=decision.y,
+            )
+        elif decision.action == "select_option":
+            result = await self.select_option(
+                session_id,
+                selector=decision.selector,
+                element_id=decision.element_id,
+                value=decision.value,
+                label=decision.label,
+                index=decision.index,
+            )
         elif decision.action == "type":
             result = await self.type(
                 session_id,
@@ -857,6 +1024,14 @@ class BrowserManager:
             result = await self.press(session_id, decision.key or "")
         elif decision.action == "scroll":
             result = await self.scroll(session_id, decision.delta_x, decision.delta_y)
+        elif decision.action == "wait":
+            result = await self.wait(session_id, decision.wait_ms)
+        elif decision.action == "reload":
+            result = await self.reload(session_id)
+        elif decision.action == "go_back":
+            result = await self.go_back(session_id)
+        elif decision.action == "go_forward":
+            result = await self.go_forward(session_id)
         elif decision.action == "upload":
             result = await self.upload(
                 session_id,
@@ -1159,6 +1334,7 @@ class BrowserManager:
         screenshot = await self._capture_screenshot(session, screenshot_label)
         summary = await self._page_summary(session.page)
         ocr = await self.ocr.extract_from_image(screenshot["path"])
+        tabs = await self._tab_summaries(session)
         return {
             "session": await self._session_summary(session),
             "url": session.page.url,
@@ -1174,6 +1350,8 @@ class BrowserManager:
             "console_messages": session.console_messages[-10:],
             "page_errors": session.page_errors[-10:],
             "request_failures": session.request_failures[-10:],
+            "tabs": tabs,
+            "recent_downloads": session.downloads[-10:],
             "takeover_url": self._current_takeover_url(session),
             "remote_access": self._session_remote_access_info(session),
         }
@@ -1361,6 +1539,8 @@ class BrowserManager:
         verified = bool(signals)
         if action_name == "navigate":
             verified = "url_changed" in signals or "title_changed" in signals
+        elif action_name in {"go_back", "go_forward"}:
+            verified = "url_changed" in signals or "title_changed" in signals
         elif action_name in {"click", "press", "scroll"}:
             verified = bool(
                 {
@@ -1372,8 +1552,14 @@ class BrowserManager:
                 }
                 & set(signals)
             )
-        elif action_name == "type":
+        elif action_name == "hover":
+            verified = bool(
+                {"active_element_changed", "text_excerpt_changed", "accessibility_focus_changed"} & set(signals)
+            ) or target_seen_after is not None
+        elif action_name in {"type", "select_option"}:
             verified = bool({"active_element_changed", "text_excerpt_changed", "accessibility_focus_changed"} & set(signals))
+        elif action_name in {"wait", "reload"}:
+            verified = True
         elif action_name == "upload":
             verified = True
 
@@ -1404,6 +1590,7 @@ class BrowserManager:
             "remote_access": self._session_remote_access_info(session),
             "isolation": self._session_isolation(session),
             "auth_state": self._session_auth_state_info(session),
+            "downloads": session.downloads[-20:],
             "last_action": session.last_action,
             "trace_path": str(session.trace_path),
         }
@@ -1415,6 +1602,32 @@ class BrowserManager:
             live=status == "active",
         )
         await self.session_store.upsert(SessionRecord.model_validate(summary))
+
+    def _tab_pages(self, session: BrowserSession) -> list[Page]:
+        pages = getattr(session.context, "pages", None)
+        if callable(pages):
+            pages = pages()
+        if isinstance(pages, list) and pages:
+            return pages
+        return [session.page]
+
+    async def _tab_summaries(self, session: BrowserSession) -> list[dict[str, Any]]:
+        tabs: list[dict[str, Any]] = []
+        for index, page in enumerate(self._tab_pages(session)):
+            self._attach_page_listeners(page, session)
+            try:
+                title = await page.title()
+            except Exception:
+                title = ""
+            tabs.append(
+                {
+                    "index": index,
+                    "active": page is session.page,
+                    "url": getattr(page, "url", ""),
+                    "title": title,
+                }
+            )
+        return tabs
 
     async def _settle(self, page: Page) -> None:
         try:
@@ -1489,7 +1702,7 @@ class BrowserManager:
 
     @staticmethod
     def _action_class(action_name: str) -> str:
-        if action_name in {"navigate", "scroll"}:
+        if action_name in {"navigate", "hover", "scroll", "wait", "reload", "go_back", "go_forward"}:
             return "read"
         return "write"
 
@@ -1582,6 +1795,13 @@ class BrowserManager:
         return candidate
 
     def _attach_page_listeners(self, page: Page, session: BrowserSession) -> None:
+        if not hasattr(page, "on"):
+            return
+        page_id = id(page)
+        if page_id in session.attached_pages:
+            return
+        session.attached_pages.add(page_id)
+
         page.on("console", lambda message: self._bounded_append(
             session.console_messages,
             {
@@ -1599,11 +1819,57 @@ class BrowserManager:
                 "failure": str(request.failure) if request.failure else None,
             },
         ))
+        page.on("download", lambda download: asyncio.create_task(self._handle_download(session, download)))
 
     def _bounded_append(self, items: list[Any], value: Any, limit: int = 50) -> None:
         items.append(value)
         if len(items) > limit:
             del items[: len(items) - limit]
+
+    async def _handle_download(self, session: BrowserSession, download: Any) -> None:
+        suggested = Path(str(getattr(download, "suggested_filename", "") or f"download-{uuid4().hex}")).name
+        destination = session.artifact_dir / "downloads" / suggested
+        if destination.exists():
+            destination = destination.with_name(f"{destination.stem}-{uuid4().hex[:8]}{destination.suffix}")
+
+        failure: str | None = None
+        status = "completed"
+        try:
+            await download.save_as(str(destination))
+            if hasattr(download, "failure"):
+                failure = await download.failure()
+        except Exception as exc:
+            failure = str(exc)
+            status = "failed"
+
+        if failure:
+            status = "failed"
+
+        record = {
+            "id": uuid4().hex[:12],
+            "timestamp": self._timestamp(),
+            "status": status,
+            "filename": destination.name,
+            "suggested_filename": suggested,
+            "path": str(destination),
+            "url": f"/artifacts/{session.id}/downloads/{destination.name}",
+            "source_url": getattr(download, "url", None),
+            "failure": failure,
+        }
+        self._bounded_append(session.downloads, record, limit=100)
+        await self._append_jsonl(session.artifact_dir / "downloads.jsonl", record)
+        await self.audit.append(
+            event_type="download_captured",
+            status=status,
+            action="download",
+            session_id=session.id,
+            details={"filename": record["filename"], "url": record["url"], "failure": failure},
+        )
+        if session.id in self.sessions:
+            try:
+                await self._persist_session(session, status="active")
+            except Exception as exc:
+                logger.warning("failed to persist download metadata for session %s: %s", session.id, exc)
 
     async def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

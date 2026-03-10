@@ -45,6 +45,18 @@ class TakeoverInput(SessionIdInput):
     reason: str = "Manual review requested"
 
 
+class ListDownloadsInput(SessionIdInput):
+    pass
+
+
+class ListTabsInput(SessionIdInput):
+    pass
+
+
+class TabActionInput(SessionIdInput):
+    index: int = Field(ge=0)
+
+
 class ApprovalIdInput(BaseModel):
     approval_id: str
 
@@ -118,6 +130,30 @@ class McpToolGateway:
                     description="Capture the current browser observation with screenshot, interactables, and perception summary.",
                     input_model=ObserveInput,
                     handler=self._observe,
+                ),
+                ToolSpec(
+                    name="browser.list_downloads",
+                    description="List files captured from browser downloads for one session.",
+                    input_model=ListDownloadsInput,
+                    handler=self._list_downloads,
+                ),
+                ToolSpec(
+                    name="browser.list_tabs",
+                    description="List currently open tabs/pages for one session.",
+                    input_model=ListTabsInput,
+                    handler=self._list_tabs,
+                ),
+                ToolSpec(
+                    name="browser.activate_tab",
+                    description="Switch the active session page to one tab index.",
+                    input_model=TabActionInput,
+                    handler=self._activate_tab,
+                ),
+                ToolSpec(
+                    name="browser.close_tab",
+                    description="Close one tab index if more than one tab is open.",
+                    input_model=TabActionInput,
+                    handler=self._close_tab,
                 ),
                 ToolSpec(
                     name="browser.execute_action",
@@ -262,6 +298,18 @@ class McpToolGateway:
 
     async def _observe(self, payload: ObserveInput) -> dict[str, Any]:
         return await self.manager.observe(payload.session_id, limit=payload.limit)
+
+    async def _list_downloads(self, payload: ListDownloadsInput) -> list[dict[str, Any]]:
+        return await self.manager.list_downloads(payload.session_id)
+
+    async def _list_tabs(self, payload: ListTabsInput) -> list[dict[str, Any]]:
+        return await self.manager.list_tabs(payload.session_id)
+
+    async def _activate_tab(self, payload: TabActionInput) -> dict[str, Any]:
+        return await self.manager.activate_tab(payload.session_id, payload.index)
+
+    async def _close_tab(self, payload: TabActionInput) -> dict[str, Any]:
+        return await self.manager.close_tab(payload.session_id, payload.index)
 
     async def _execute_action(self, payload: ExecuteActionInput) -> dict[str, Any]:
         return await self.manager.execute_decision(

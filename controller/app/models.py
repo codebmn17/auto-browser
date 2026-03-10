@@ -34,6 +34,14 @@ class ScrollRequest(BaseModel):
     delta_y: float = 600
 
 
+class SelectOptionRequest(BaseModel):
+    selector: str | None = None
+    element_id: str | None = None
+    value: str | None = None
+    label: str | None = None
+    index: int | None = Field(default=None, ge=0)
+
+
 class NavigateRequest(BaseModel):
     url: str
 
@@ -54,6 +62,15 @@ class HumanTakeoverRequest(BaseModel):
     reason: str = "Manual review requested"
 
 
+class ExecuteActionRequest(BaseModel):
+    approval_id: str | None = None
+    action: "BrowserActionDecision"
+
+
+class TabIndexRequest(BaseModel):
+    index: int = Field(ge=0)
+
+
 class SessionEnvelope(BaseModel):
     session: dict[str, Any]
 
@@ -69,9 +86,15 @@ class ActionEnvelope(BaseModel):
 ActionName = Literal[
     "navigate",
     "click",
+    "hover",
+    "select_option",
     "type",
     "press",
     "scroll",
+    "wait",
+    "reload",
+    "go_back",
+    "go_forward",
     "upload",
     "request_human_takeover",
     "done",
@@ -107,15 +130,19 @@ class BrowserActionDecision(BaseModel):
     text: str | None = None
     clear_first: bool = True
     key: str | None = None
+    value: str | None = None
+    label: str | None = None
+    index: int | None = Field(default=None, ge=0)
     delta_x: float = 0
     delta_y: float = 600
+    wait_ms: int = Field(default=1000, ge=0, le=30000)
     url: str | None = None
     file_path: str | None = None
 
     @model_validator(mode="after")
     def validate_action_requirements(self) -> "BrowserActionDecision":
         if self.risk_category is None:
-            if self.action in {"navigate", "scroll", "done"}:
+            if self.action in {"navigate", "hover", "scroll", "wait", "reload", "go_back", "go_forward", "done"}:
                 self.risk_category = "read"
             elif self.action == "upload":
                 self.risk_category = "upload"
@@ -127,8 +154,13 @@ class BrowserActionDecision(BaseModel):
         has_click_target = bool(self.element_id or self.selector or (self.x is not None and self.y is not None))
         has_locator_target = bool(self.element_id or self.selector)
 
-        if self.action == "click" and not has_click_target:
-            raise ValueError("click requires element_id, selector, or x+y coordinates")
+        if self.action in {"click", "hover"} and not has_click_target:
+            raise ValueError(f"{self.action} requires element_id, selector, or x+y coordinates")
+        if self.action == "select_option":
+            if not has_locator_target:
+                raise ValueError("select_option requires element_id or selector")
+            if self.value is None and self.label is None and self.index is None:
+                raise ValueError("select_option requires value, label, or index")
         if self.action == "type":
             if not has_locator_target:
                 raise ValueError("type requires element_id or selector")
@@ -143,7 +175,7 @@ class BrowserActionDecision(BaseModel):
                 raise ValueError("upload requires element_id or selector")
             if not self.file_path:
                 raise ValueError("upload requires file_path")
-        if self.action in {"done", "request_human_takeover"}:
+        if self.action in {"done", "request_human_takeover", "wait", "reload", "go_back", "go_forward"}:
             return self
         return self
 
@@ -168,6 +200,7 @@ class ProviderInfo(BaseModel):
     model: str | None = None
     auth_mode: str = "api"
     detail: str | None = None
+    login_command: str | None = None
 
 
 class ProviderDecisionEnvelope(BaseModel):
@@ -234,6 +267,7 @@ class SessionRecord(BaseModel):
     remote_access: dict[str, Any]
     isolation: dict[str, Any] = Field(default_factory=dict)
     auth_state: dict[str, Any] = Field(default_factory=dict)
+    downloads: list[dict[str, Any]] = Field(default_factory=list)
     last_action: str | None = None
     trace_path: str | None = None
 

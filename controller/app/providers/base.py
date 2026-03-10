@@ -77,6 +77,10 @@ class BaseProviderAdapter(ABC):
     def readiness_detail(self) -> str:
         return "configured" if self.configured else self.missing_detail
 
+    @property
+    def login_command(self) -> str | None:
+        return None
+
     async def decide(
         self,
         *,
@@ -190,6 +194,8 @@ class BaseProviderAdapter(ABC):
             "console_messages": observation.get("console_messages", []),
             "page_errors": observation.get("page_errors", []),
             "request_failures": observation.get("request_failures", []),
+            "tabs": observation.get("tabs", []),
+            "recent_downloads": observation.get("recent_downloads", []),
             "takeover_url": observation.get("takeover_url"),
         }
 
@@ -209,7 +215,7 @@ class BaseProviderAdapter(ABC):
             "- Use only the current observation. element_id values are observation-scoped.\n"
             "- Prefer element_id over selector. Use coordinates only for click when no reliable locator exists.\n"
             "- Never invent URLs, elements, or file paths.\n"
-            "- Always set risk_category. Use read for navigate/scroll/done, write for normal click/type/press, upload for file uploads.\n"
+            "- Always set risk_category. Use read for navigate/hover/scroll/wait/reload/go_back/go_forward/done, write for normal click/type/press/select_option, upload for file uploads.\n"
             "- If an action would post/send/publish content, set risk_category=post.\n"
             "- If an action would submit a payment/order, set risk_category=payment.\n"
             "- If an action would change profile/settings/security/billing/account state, set risk_category=account_change.\n"
@@ -217,6 +223,8 @@ class BaseProviderAdapter(ABC):
             "- If the goal is already complete, return action=done.\n"
             "- If the next step involves login, MFA, CAPTCHA, payments, sending/posting, or you are uncertain, return action=request_human_takeover.\n"
             "- For upload, use only an explicitly provided staged file_path.\n"
+            "- Use wait when the page is loading or a result is expected to appear shortly without interacting.\n"
+            "- Use reload, go_back, or go_forward only when that browser navigation is clearly the best next move.\n"
             f"Goal:\n{goal}\n\n"
             f"Context hints:\n{context_hints or 'None'}\n\n"
             f"Previous steps (most recent last):\n{json.dumps(prior_steps, ensure_ascii=False)}\n\n"
@@ -350,7 +358,11 @@ class BaseProviderAdapter(ABC):
         matches = [str(home_path / marker) for marker in auth_markers if (home_path / marker).exists()]
         if not matches:
             expected = ", ".join(str(home_path / marker) for marker in auth_markers)
-            return False, f"No {self.provider} CLI auth state found under {home_path}; expected one of: {expected}"
+            return (
+                False,
+                f"No {self.provider} CLI auth state found under {home_path}; expected one of: {expected}. "
+                "Run the CLI interactively once with HOME set to CLI_HOME, or use scripts/bootstrap_cli_auth.sh.",
+            )
 
         return True, f"ready via {cli_label} CLI ({resolved_cli}); auth state found at {', '.join(matches)}"
 
