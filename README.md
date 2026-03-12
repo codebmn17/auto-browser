@@ -5,7 +5,7 @@
 [![MCP Server](https://img.shields.io/badge/MCP-server-blue)](./README.md)
 [![Local First](https://img.shields.io/badge/local-first-0ea5e9)](./README.md)
 
-![Auto Browser hero](docs/assets/hero.svg)
+![Auto Browser demo](docs/assets/demo.gif)
 
 > **Give your AI agent a real browser — with a human in the loop.**
 
@@ -26,6 +26,8 @@ Works with:
 If you want one clean mental model, this repo is:
 
 > **browser agent as an MCP server**
+
+If Auto Browser is useful, a ⭐ helps others find it.
 
 ## 3-command quickstart
 
@@ -342,7 +344,7 @@ If you just want to sign in interactively on this host, use the included bootstr
 If this box already has those subscription logins locally, the smoother path is to mount the real host homes read-only at their native paths instead of copying caches around:
 
 ```bash
-CLI_HOST_HOME=/home/botuser \
+CLI_HOST_HOME=/home/youruser \
 OPENAI_AUTH_MODE=cli \
 CLAUDE_AUTH_MODE=cli \
 GEMINI_AUTH_MODE=cli \
@@ -354,7 +356,7 @@ That override:
 - sets `CLI_HOME` to the host-style home path inside the container
 - behaves much more like running the CLIs directly on the host
 
-If your host home is not `/home/botuser`, set `CLI_HOST_HOME` first.
+If your host home is not `/home/youruser`, set `CLI_HOST_HOME` first.
 
 If Codex subscription auth still does not survive inside Docker cleanly, use the host-side bridge instead. It runs `codex` on the host and exposes a Unix socket through the shared `./data` mount:
 

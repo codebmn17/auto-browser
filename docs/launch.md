@@ -54,11 +54,35 @@ See `docs/good-first-issues.md`.
 
 ## Public launch checklist
 
+### Pre-launch (do before going public)
+
 - [ ] review README top section
 - [ ] verify license and contribution docs exist
 - [ ] confirm `.env` and data dirs are ignored
 - [ ] run `make release-audit`
-- [ ] confirm screenshots/GIF you want in README
+- [ ] record demo GIF: login → human takeover → save auth profile → reopen session
+- [ ] embed GIF in README (above the fold, before quickstart)
 - [ ] verify no secrets in git history for this branch
-- [ ] prepare first 3 “good first issue” tickets
-- [ ] choose whether to publish as release `v0.1.0`
+- [ ] prepare first 3 “good first issue” tickets (see `docs/good-first-issues.md`)
+- [ ] create GitHub release `v0.1.0` with changelog
+- [ ] add GitHub topics: `mcp`, `browser-automation`, `playwright`, `llm`, `claude`, `ai-agent`, `self-hosted`, `local-first`, `fastapi`, `docker`
+
+### Day 1 launch (same day, in order)
+
+- [ ] post Show HN — title: `Show HN: Auto Browser – open-source MCP browser agent with human takeover`
+- [ ] post to r/LocalLLaMA
+- [ ] post to Anthropic Discord `#show-and-tell` channel
+- [ ] post X/Twitter thread with demo GIF
+- [ ] submit PR to `awesome-mcp-servers` (https://github.com/punkpeye/awesome-mcp-servers)
+- [ ] submit PR to `awesome-playwright` (https://github.com/mxschmitt/awesome-playwright)
+
+### Day 2–7
+
+- [ ] respond to every issue and comment within 24 hours
+- [ ] publish one technical post: “How I built persistent browser auth profiles for AI agents” or “Why browser agents need a human takeover button”
+- [ ] post to r/selfhosted (angle: local-first, no cloud, your data stays local)
+
+### Second wave (after initial traction)
+
+- [ ] write comparison post: “Auto Browser vs Browserbase — when self-hosted beats managed”
+- [ ] submit to more awesome lists: `awesome-llm-tools`, `awesome-ai-agents`
