@@ -34,6 +34,10 @@ class ObserveInput(SessionIdInput):
     limit: int = Field(default=40, ge=1, le=100)
 
 
+class SessionTailInput(SessionIdInput):
+    limit: int = Field(default=20, ge=1, le=100)
+
+
 class ScreenshotInput(SessionIdInput):
     label: str = Field(default="manual", min_length=1, max_length=120)
 
@@ -213,6 +217,30 @@ class McpToolGateway:
                     description="Capture a lightweight screenshot for one session without the full observe payload.",
                     input_model=ScreenshotInput,
                     handler=self._screenshot,
+                ),
+                ToolSpec(
+                    name="browser.get_console",
+                    description="Read recent browser console messages for an active session.",
+                    input_model=SessionTailInput,
+                    handler=self._get_console,
+                ),
+                ToolSpec(
+                    name="browser.get_page_errors",
+                    description="Read recent uncaught page errors for an active session.",
+                    input_model=SessionTailInput,
+                    handler=self._get_page_errors,
+                ),
+                ToolSpec(
+                    name="browser.get_request_failures",
+                    description="Read recent failed network requests for an active session.",
+                    input_model=SessionTailInput,
+                    handler=self._get_request_failures,
+                ),
+                ToolSpec(
+                    name="browser.stop_trace",
+                    description="Finalize the current Playwright trace for an active session and return its artifact path.",
+                    input_model=SessionIdInput,
+                    handler=self._stop_trace,
                 ),
                 ToolSpec(
                     name="browser.list_auth_profiles",
@@ -544,6 +572,18 @@ class McpToolGateway:
 
     async def _screenshot(self, payload: ScreenshotInput) -> dict[str, Any]:
         return await self.manager.capture_screenshot(payload.session_id, label=payload.label)
+
+    async def _get_console(self, payload: SessionTailInput) -> dict[str, Any]:
+        return await self.manager.get_console_messages(payload.session_id, limit=payload.limit)
+
+    async def _get_page_errors(self, payload: SessionTailInput) -> dict[str, Any]:
+        return await self.manager.get_page_errors(payload.session_id, limit=payload.limit)
+
+    async def _get_request_failures(self, payload: SessionTailInput) -> dict[str, Any]:
+        return await self.manager.get_request_failures(payload.session_id, limit=payload.limit)
+
+    async def _stop_trace(self, payload: SessionIdInput) -> dict[str, Any]:
+        return await self.manager.stop_trace(payload.session_id)
 
     async def _list_auth_profiles(self, _: ListAuthProfilesInput) -> list[dict[str, Any]]:
         return await self.manager.list_auth_profiles()

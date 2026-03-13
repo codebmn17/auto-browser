@@ -66,6 +66,7 @@ class BrowserSession:
     upload_dir: Path
     takeover_url: str
     trace_path: Path
+    trace_recording: bool = False
     browser_node_name: str = "browser-node"
     isolation_mode: str = "shared_browser_node"
     browser: Browser | None = None
@@ -528,6 +529,7 @@ class BrowserManager:
                 upload_dir=upload_dir,
                 takeover_url=runtime.takeover_url if runtime is not None else self.settings.takeover_url,
                 trace_path=artifact_dir / "trace.zip",
+                trace_recording=self.settings.enable_tracing,
                 browser_node_name=runtime.browser_node_name if runtime is not None else "browser-node",
                 isolation_mode=self.settings.session_isolation_mode,
                 browser=browser,
@@ -704,6 +706,39 @@ class BrowserManager:
                 "screenshot_path": screenshot["path"],
                 "screenshot_url": screenshot["url"],
                 "takeover_url": self._current_takeover_url(session),
+            }
+
+    async def get_console_messages(self, session_id: str, *, limit: int = 20) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+        async with session.lock:
+            return {
+                "session": await self._session_summary(session),
+                "items": session.console_messages[-limit:],
+            }
+
+    async def get_page_errors(self, session_id: str, *, limit: int = 20) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+        async with session.lock:
+            return {
+                "session": await self._session_summary(session),
+                "items": session.page_errors[-limit:],
+            }
+
+    async def get_request_failures(self, session_id: str, *, limit: int = 20) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+        async with session.lock:
+            return {
+                "session": await self._session_summary(session),
+                "items": session.request_failures[-limit:],
+            }
+
+    async def stop_trace(self, session_id: str) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+        async with session.lock:
+            await self._stop_trace_recording(session)
+            return {
+                "session": await self._session_summary(session),
+                **self._trace_payload(session),
             }
 
     async def navigate(self, session_id: str, url: str) -> dict[str, Any]:
@@ -2731,11 +2766,7 @@ class BrowserManager:
             if session.tunnel is not None:
                 await self.tunnel_broker.release(session.tunnel)
             summary = await self._session_summary(session, status="closed", live=False)
-            if self.settings.enable_tracing:
-                try:
-                    await session.context.tracing.stop(path=str(session.trace_path))
-                except Exception as exc:  # pragma: no cover - depends on external browser support
-                    logger.warning("failed to stop tracing for session %s: %s", session_id, exc)
+            await self._stop_trace_recording(session)
             try:
                 await session.context.close()
             finally:
@@ -3041,6 +3072,24 @@ class BrowserManager:
         path = session.artifact_dir / filename
         await session.page.screenshot(path=str(path), full_page=False)
         return {"path": str(path), "url": f"/artifacts/{session.id}/{filename}"}
+
+    def _trace_payload(self, session: BrowserSession) -> dict[str, Any]:
+        return {
+            "trace_path": str(session.trace_path),
+            "trace_url": f"/artifacts/{session.id}/{session.trace_path.name}",
+            "trace_exists": session.trace_path.exists(),
+            "trace_recording": session.trace_recording,
+        }
+
+    async def _stop_trace_recording(self, session: BrowserSession) -> None:
+        if not self.settings.enable_tracing or not session.trace_recording:
+            session.trace_recording = False
+            return
+        try:
+            await session.context.tracing.stop(path=str(session.trace_path))
+            session.trace_recording = False
+        except Exception as exc:  # pragma: no cover - depends on external browser support
+            logger.warning("failed to stop tracing for session %s: %s", session.id, exc)
 
     async def _page_summary(self, page: Page) -> dict[str, Any]:
         summary = await page.evaluate(PAGE_SUMMARY_SCRIPT, 2000)

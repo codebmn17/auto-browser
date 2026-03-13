@@ -19,6 +19,19 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             get_session_record=AsyncMock(return_value={"id": "session-1", "status": "active"}),
             observe=AsyncMock(return_value={"session": {"id": "session-1"}, "url": "https://example.com"}),
             capture_screenshot=AsyncMock(return_value={"screenshot_url": "/artifacts/session-1/manual.png"}),
+            get_console_messages=AsyncMock(return_value={"items": [{"type": "error", "text": "boom"}]}),
+            get_page_errors=AsyncMock(return_value={"items": ["ReferenceError: nope"]}),
+            get_request_failures=AsyncMock(
+                return_value={"items": [{"url": "https://example.com/api", "failure": "net::ERR_FAILED"}]}
+            ),
+            stop_trace=AsyncMock(
+                return_value={
+                    "trace_path": "/data/artifacts/session-1/trace.zip",
+                    "trace_url": "/artifacts/session-1/trace.zip",
+                    "trace_exists": True,
+                    "trace_recording": False,
+                }
+            ),
             list_auth_profiles=AsyncMock(return_value=[{"profile_name": "outlook-default"}]),
             get_auth_profile=AsyncMock(return_value={"profile_name": "outlook-default"}),
             list_tabs=AsyncMock(return_value=[{"index": 0, "active": True, "url": "https://example.com"}]),
@@ -77,6 +90,10 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("browser.create_session", names)
         self.assertIn("browser.screenshot", names)
+        self.assertIn("browser.get_console", names)
+        self.assertIn("browser.get_page_errors", names)
+        self.assertIn("browser.get_request_failures", names)
+        self.assertIn("browser.stop_trace", names)
         self.assertIn("browser.list_auth_profiles", names)
         self.assertIn("browser.get_auth_profile", names)
         self.assertIn("browser.list_tabs", names)
@@ -96,7 +113,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("social.dm", names)
         self.assertIn("social.login", names)
         self.assertIn("social.search", names)
-        self.assertEqual(len(names), 19)
+        self.assertEqual(len(names), 23)
         self.assertEqual(len(names), len(tools))
 
     async def test_full_profile_keeps_internal_tools_available(self) -> None:
@@ -162,6 +179,41 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(response.isError)
         self.manager.capture_screenshot.assert_awaited_once_with("session-1", label="checkpoint")
+
+    async def test_debug_tools_forward_arguments(self) -> None:
+        console_response = await self.gateway.call_tool(
+            McpToolCallRequest(
+                name="browser.get_console",
+                arguments={"session_id": "session-1", "limit": 5},
+            )
+        )
+        page_error_response = await self.gateway.call_tool(
+            McpToolCallRequest(
+                name="browser.get_page_errors",
+                arguments={"session_id": "session-1", "limit": 7},
+            )
+        )
+        request_failure_response = await self.gateway.call_tool(
+            McpToolCallRequest(
+                name="browser.get_request_failures",
+                arguments={"session_id": "session-1", "limit": 9},
+            )
+        )
+        trace_response = await self.gateway.call_tool(
+            McpToolCallRequest(
+                name="browser.stop_trace",
+                arguments={"session_id": "session-1"},
+            )
+        )
+
+        self.assertFalse(console_response.isError)
+        self.assertFalse(page_error_response.isError)
+        self.assertFalse(request_failure_response.isError)
+        self.assertFalse(trace_response.isError)
+        self.manager.get_console_messages.assert_awaited_once_with("session-1", limit=5)
+        self.manager.get_page_errors.assert_awaited_once_with("session-1", limit=7)
+        self.manager.get_request_failures.assert_awaited_once_with("session-1", limit=9)
+        self.manager.stop_trace.assert_awaited_once_with("session-1")
 
     async def test_create_session_forwards_proxy_and_user_agent_options(self) -> None:
         response = await self.gateway.call_tool(
