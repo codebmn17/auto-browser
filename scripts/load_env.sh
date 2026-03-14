@@ -16,3 +16,17 @@ load_repo_env() {
     set +a
   fi
 }
+
+resolve_repo_host_path() {
+  local root_dir="$1"
+  local raw_path="$2"
+  if [[ "$raw_path" == /data/* ]]; then
+    echo "$root_dir/data/${raw_path#/data/}"
+    return 0
+  fi
+  if [[ "$raw_path" == /* ]]; then
+    echo "$raw_path"
+    return 0
+  fi
+  echo "$root_dir/$raw_path"
+}

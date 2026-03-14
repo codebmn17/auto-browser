@@ -87,19 +87,6 @@ if b"200 OK" not in payload:
 PY
 }
 
-resolve_host_path() {
-  local raw_path="$1"
-  if [[ "$raw_path" == /data/* ]]; then
-    echo "$ROOT_DIR/data/${raw_path#/data/}"
-    return 0
-  fi
-  if [[ "$raw_path" == /* ]]; then
-    echo "$raw_path"
-    return 0
-  fi
-  echo "$ROOT_DIR/$raw_path"
-}
-
 require_bin docker
 require_bin curl
 require_bin jq
@@ -152,7 +139,7 @@ if [[ -n "$current_controller_port" ]]; then
 fi
 
 if [[ "$OPENAI_AUTH_MODE" == "host_bridge" ]]; then
-  host_socket_path="$(resolve_host_path "$OPENAI_HOST_BRIDGE_SOCKET")"
+  host_socket_path="$(resolve_repo_host_path "$ROOT_DIR" "$OPENAI_HOST_BRIDGE_SOCKET")"
   if [[ ! -S "$host_socket_path" ]]; then
     echo "Host bridge socket missing at $host_socket_path" >&2
     echo "Start the bridge first, for example:" >&2

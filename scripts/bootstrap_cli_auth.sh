@@ -4,10 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-if [[ ! -t 0 || ! -t 1 ]]; then
-  echo >&2 "bootstrap_cli_auth.sh must run in an interactive terminal"
-  exit 1
-fi
+source "$ROOT_DIR/scripts/load_env.sh"
+load_repo_env "$ROOT_DIR/.env"
 
 usage() {
   cat <<'USAGE'
@@ -16,7 +14,8 @@ Usage:
 
 What it does:
   Opens the requested provider CLI interactively inside the controller image with
-  HOME=/data/cli-home so the login/session state persists in ./data/cli-home.
+  HOME=$CLI_HOME (default /data/cli-home) so the login/session state persists in
+  the matching host path.
 
 Examples:
   ./scripts/bootstrap_cli_auth.sh codex
@@ -24,10 +23,6 @@ Examples:
   ./scripts/bootstrap_cli_auth.sh all
 USAGE
 }
-
-if [[ $# -eq 0 ]]; then
-  set -- all
-fi
 
 providers=()
 for raw in "$@"; do
@@ -56,6 +51,16 @@ for raw in "$@"; do
   esac
 done
 
+if [[ ! -t 0 || ! -t 1 ]]; then
+  echo >&2 "bootstrap_cli_auth.sh must run in an interactive terminal"
+  exit 1
+fi
+
+if [[ $# -eq 0 ]]; then
+  set -- all
+  providers+=(codex claude gemini)
+fi
+
 # De-duplicate while preserving order.
 unique_providers=()
 for provider in "${providers[@]}"; do
@@ -71,18 +76,23 @@ for provider in "${providers[@]}"; do
   fi
 done
 
-mkdir -p data/cli-home
+container_cli_home="${CLI_HOME:-/data/cli-home}"
+host_cli_home="$(resolve_repo_host_path "$ROOT_DIR" "$container_cli_home")"
+mkdir -p "$host_cli_home"
 
 for provider in "${unique_providers[@]}"; do
   echo
   echo "=== Bootstrapping ${provider} auth inside the controller container ==="
+  echo "Using CLI_HOME=${container_cli_home}"
   echo "Complete login in the interactive CLI, then exit back to this shell."
   docker compose run --rm \
+    -e "CLI_HOME=${container_cli_home}" \
+    -e "HOME=${container_cli_home}" \
     --entrypoint bash \
     controller \
-    -lc "export HOME=/data/cli-home; export NO_COLOR=1; exec ${provider}"
+    -lc "export NO_COLOR=1; exec ${provider}"
 done
 
 echo
 echo "Done. Current auth cache contents:"
-find data/cli-home -maxdepth 2 \( -name '.codex' -o -name '.claude' -o -name '.claude.json' -o -name '.gemini' \) -print | sed 's#^#- #' || true
+find "$host_cli_home" -maxdepth 2 \( -name '.codex' -o -name '.claude' -o -name '.claude.json' -o -name '.gemini' \) -print | sed 's#^#- #' || true
