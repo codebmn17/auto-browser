@@ -620,6 +620,44 @@ curl -s http://localhost:8000/sessions/<session-id>/actions/type \
   -d '{"element_id":"op-password","text":"super-secret","clear_first":true,"sensitive":true}' | jq
 ```
 
+### Hover over an element
+
+```bash
+curl -s http://localhost:8000/sessions/<session-id>/actions/hover \
+  -X POST \
+  -H 'content-type: application/json' \
+  -d '{"selector":"#dropdown-trigger"}' | jq
+```
+
+Use coordinates instead: `{"x": 640, "y": 360}`
+
+### Select a dropdown option
+
+```bash
+curl -s http://localhost:8000/sessions/<session-id>/actions/select-option \
+  -X POST \
+  -H 'content-type: application/json' \
+  -d '{"selector":"select#size","value":"large"}' | jq
+```
+
+Also accepts `label` (visible text) or `index` (0-based position).
+
+### Wait, reload, and navigate history
+
+```bash
+# Wait 1.5 seconds
+curl -s http://localhost:8000/sessions/<session-id>/actions/wait \
+  -X POST -H 'content-type: application/json' -d '{"wait_ms":1500}' | jq
+
+# Reload the current page
+curl -s http://localhost:8000/sessions/<session-id>/actions/reload \
+  -X POST | jq
+
+# Browser back / forward
+curl -s http://localhost:8000/sessions/<session-id>/actions/go-back  -X POST | jq
+curl -s http://localhost:8000/sessions/<session-id>/actions/go-forward -X POST | jq
+```
+
 ### Save auth state for later reuse
 
 ```bash
