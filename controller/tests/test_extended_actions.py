@@ -10,7 +10,48 @@ from pydantic import ValidationError
 
 from app.browser_manager import BrowserManager, BrowserSession
 from app.config import Settings
-from app.models import BrowserActionDecision, CreateSessionRequest
+from app.models import BrowserActionDecision, CreateSessionRequest, HoverRequest, SelectOptionRequest, WaitRequest
+
+
+class RequestModelTests(unittest.TestCase):
+    def test_hover_request_accepts_selector(self) -> None:
+        req = HoverRequest(selector="#menu")
+        self.assertEqual(req.selector, "#menu")
+        self.assertIsNone(req.x)
+        self.assertIsNone(req.y)
+
+    def test_hover_request_accepts_coordinates(self) -> None:
+        req = HoverRequest(x=100.0, y=200.0)
+        self.assertIsNone(req.selector)
+        self.assertEqual(req.x, 100.0)
+        self.assertEqual(req.y, 200.0)
+
+    def test_hover_request_all_optional(self) -> None:
+        # HoverRequest itself has no required fields — BrowserManager validates the combination
+        req = HoverRequest()
+        self.assertIsNone(req.selector)
+
+    def test_wait_request_clamps_min(self) -> None:
+        req = WaitRequest(wait_ms=0)
+        self.assertEqual(req.wait_ms, 0)
+
+    def test_wait_request_clamps_max(self) -> None:
+        with self.assertRaises(Exception):
+            WaitRequest(wait_ms=31000)
+
+    def test_wait_request_default(self) -> None:
+        req = WaitRequest()
+        self.assertEqual(req.wait_ms, 0)
+
+    def test_select_option_request_value(self) -> None:
+        req = SelectOptionRequest(selector="select#size", value="medium")
+        self.assertEqual(req.selector, "select#size")
+        self.assertEqual(req.value, "medium")
+        self.assertIsNone(req.label)
+
+    def test_select_option_request_index_non_negative(self) -> None:
+        with self.assertRaises(Exception):
+            SelectOptionRequest(selector="select", index=-1)
 
 
 class BrowserActionDecisionExtendedTests(unittest.TestCase):
