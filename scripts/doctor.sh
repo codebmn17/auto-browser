@@ -99,12 +99,13 @@ REQUESTED_VNC_PORT="${VNC_PORT:-5900}"
 current_controller_port=""
 current_browser_novnc_port=""
 current_browser_vnc_port=""
-if docker compose ps -q controller >/dev/null 2>&1; then
-  current_controller_port="$(docker compose port controller 8000 2>/dev/null | awk -F: 'NF {print $NF}' | tail -n1)"
+# docker compose ps -q exits 0 even when no containers exist; check for non-empty output
+if docker compose ps -q controller 2>/dev/null | grep -q .; then
+  current_controller_port="$(docker compose port controller 8000 2>/dev/null | awk -F: 'NF {print $NF}' | tail -n1 || true)"
 fi
-if docker compose ps -q browser-node >/dev/null 2>&1; then
-  current_browser_novnc_port="$(docker compose port browser-node 6080 2>/dev/null | awk -F: 'NF {print $NF}' | tail -n1)"
-  current_browser_vnc_port="$(docker compose port browser-node 5900 2>/dev/null | awk -F: 'NF {print $NF}' | tail -n1)"
+if docker compose ps -q browser-node 2>/dev/null | grep -q .; then
+  current_browser_novnc_port="$(docker compose port browser-node 6080 2>/dev/null | awk -F: 'NF {print $NF}' | tail -n1 || true)"
+  current_browser_vnc_port="$(docker compose port browser-node 5900 2>/dev/null | awk -F: 'NF {print $NF}' | tail -n1 || true)"
 fi
 
 API_PORT="$(pick_port "$REQUESTED_API_PORT" "$current_controller_port" 8010 8011 8012 18000)"
