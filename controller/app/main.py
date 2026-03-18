@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import StreamingResponse
 
 from .agent_jobs import AgentJobQueue
 from .action_errors import BrowserActionError
@@ -26,8 +29,10 @@ from .models import (
     ExecuteActionRequest,
     HoverRequest,
     HumanTakeoverRequest,
+    ImportAuthProfileRequest,
     McpToolCallRequest,
     NavigateRequest,
+    ObserveRequest,
     PressRequest,
     SaveAuthProfileRequest,
     SaveStorageStateRequest,
@@ -49,6 +54,7 @@ from .models import (
     UploadRequest,
     WaitRequest,
 )
+from . import events as _events
 from .orchestrator import BrowserOrchestrator
 from .provider_registry import ProviderRegistry
 from .rate_limits import SlidingWindowRateLimiter, build_rate_limit_key, is_exempt_path
@@ -89,7 +95,7 @@ mcp_transport = McpHttpTransport(
     tool_gateway=tool_gateway,
     server_name="auto-browser",
     server_title="Auto Browser MCP",
-    server_version="0.2.0",
+    server_version="0.3.0",
     allowed_origins=settings.mcp_allowed_origin_list,
     session_store_path=settings.mcp_session_store_path,
 )
@@ -115,12 +121,17 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Auto Browser Controller",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
     summary="Visual Auto Browser control plane for LLM workflows.",
 )
 
 app.mount("/artifacts", StaticFiles(directory=settings.artifact_root), name="artifacts")
+
+# Operator dashboard — served at /ui/
+_UI_DIR = Path(__file__).parent / "ui"
+if _UI_DIR.exists():
+    app.mount("/ui", StaticFiles(directory=str(_UI_DIR), html=True), name="ui")
 
 
 @app.exception_handler(SocialActionError)
@@ -437,9 +448,18 @@ async def get_auth_profile(profile_name: str) -> dict:
 
 
 @app.get("/sessions/{session_id}/observe")
-async def observe(session_id: str, limit: int = 40) -> dict:
+async def observe(session_id: str, limit: int = 40, preset: str = "normal") -> dict:
     try:
-        return await manager.observe(session_id, limit=limit)
+        return await manager.observe(session_id, limit=limit, preset=preset)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+
+
+@app.post("/sessions/{session_id}/observe")
+async def observe_post(session_id: str, payload: ObserveRequest) -> dict:
+    """Observe with a perception preset. POST body allows richer options than query params."""
+    try:
+        return await manager.observe(session_id, limit=payload.limit, preset=payload.preset)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
 
@@ -980,6 +1000,95 @@ async def list_mcp_tools() -> list[dict]:
 @app.post("/mcp/tools/call")
 async def call_mcp_tool(payload: McpToolCallRequest) -> dict:
     return (await tool_gateway.call_tool(payload)).model_dump()
+
+
+@app.get("/sessions/{session_id}/events")
+async def session_events(session_id: str, request: Request):
+    """SSE stream of observe/action/approval events for a session.
+
+    Clients receive newline-delimited ``data: <json>\\n\\n`` messages.
+    A keepalive comment is sent every ``settings.sse_keepalive_seconds`` seconds.
+    """
+    try:
+        await manager.get_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+
+    queue = _events.subscribe(session_id)
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    payload = await asyncio.wait_for(
+                        queue.get(),
+                        timeout=settings.sse_keepalive_seconds,
+                    )
+                    yield f"data: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    # keepalive comment — prevents proxy from dropping idle connection
+                    yield ": keepalive\n\n"
+        finally:
+            _events.unsubscribe(session_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/sessions/{session_id}/screenshot/compare")
+async def screenshot_compare(session_id: str) -> dict:
+    """Capture a screenshot and diff it against the most recent prior screenshot.
+
+    Returns pixel change count, percentage, and a diff image URL.
+    """
+    try:
+        return await manager.screenshot_diff(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/auth-profiles/{profile_name}/export")
+async def export_auth_profile(profile_name: str):
+    """Download an auth profile as a .tar.gz archive."""
+    try:
+        result = await manager.export_auth_profile(profile_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    archive_path = Path(result["archive_path"])
+    if not archive_path.exists():
+        raise HTTPException(status_code=500, detail="archive file not found after export")
+
+    return FileResponse(
+        path=str(archive_path),
+        media_type="application/gzip",
+        filename=result["archive_name"],
+    )
+
+
+@app.post("/auth-profiles/import")
+async def import_auth_profile(payload: ImportAuthProfileRequest) -> dict:
+    """Import an auth profile from a .tar.gz archive on the server filesystem."""
+    try:
+        return await manager.import_auth_profile(payload.archive_path, overwrite=payload.overwrite)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.delete("/sessions/{session_id}")

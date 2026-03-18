@@ -24,6 +24,8 @@ except Exception:  # pragma: no cover - graceful fallback for non-login test run
 from .action_errors import BrowserActionError
 from .audit import AuditStore
 from .approvals import ApprovalRequiredError, ApprovalStore
+from . import events as _events
+from .webhooks import dispatch_approval_event
 from .auth_state import AuthStateManager
 from .config import Settings
 from .models import ApprovalKind, BrowserActionDecision, SessionRecord, SessionStatus
@@ -691,10 +693,17 @@ class BrowserManager:
             "execution": execution,
         }
 
-    async def observe(self, session_id: str, limit: int = 40) -> dict[str, Any]:
+    async def observe(self, session_id: str, limit: int = 40, preset: str = "normal") -> dict[str, Any]:
         session = await self.get_session(session_id)
         async with session.lock:
-            return await self._observation_payload(session, limit=limit)
+            result = await self._observation_payload(session, limit=limit, preset=preset)
+            _events.emit_observe(
+                session_id,
+                result.get("url", ""),
+                result.get("title", ""),
+                result.get("screenshot_url"),
+            )
+            return result
 
     async def capture_screenshot(self, session_id: str, *, label: str = "manual") -> dict[str, Any]:
         session = await self.get_session(session_id)
@@ -2758,6 +2767,17 @@ class BrowserManager:
             action=decision,
             observation=await self._approval_observation(session),
         )
+        # Emit SSE event
+        _events.emit_approval(session_id, approval.id, approval.kind, approval.status, approval.reason)
+        # Fire webhook if configured
+        if self.settings.approval_webhook_url:
+            asyncio.ensure_future(
+                dispatch_approval_event(
+                    approval,
+                    webhook_url=self.settings.approval_webhook_url,
+                    webhook_secret=self.settings.approval_webhook_secret,
+                )
+            )
         raise ApprovalRequiredError(approval)
 
     async def close_session(self, session_id: str) -> dict[str, Any]:
@@ -2959,6 +2979,7 @@ class BrowserManager:
                 details={"target": target, "verification": verification},
             )
             await self._persist_session(session, status="active")
+            _events.emit_action(session.id, action_name, "ok", {"url": session.page.url})
             return {
                 "action": action_name,
                 "action_class": self._action_class(action_name),
@@ -3026,10 +3047,41 @@ class BrowserManager:
         *,
         limit: int = 40,
         screenshot_label: str = "observe",
+        preset: str = "normal",
     ) -> dict[str, Any]:
-        interactables = await session.page.evaluate(INTERACTABLES_SCRIPT, limit)
         screenshot = await self._capture_screenshot(session, screenshot_label)
-        summary = await self._page_summary(session.page)
+
+        # fast preset: screenshot only — skip OCR and accessibility tree
+        if preset == "fast":
+            title = await session.page.title()
+            tabs = await self._tab_summaries(session)
+            return {
+                "session": await self._session_summary(session),
+                "url": session.page.url,
+                "title": title,
+                "active_element": None,
+                "text_excerpt": "",
+                "dom_outline": {},
+                "accessibility_outline": {"available": False, "nodes": []},
+                "ocr": None,
+                "interactables": [],
+                "screenshot_path": screenshot["path"],
+                "screenshot_url": screenshot["url"],
+                "console_messages": session.console_messages[-10:],
+                "page_errors": session.page_errors[-10:],
+                "request_failures": [],
+                "tabs": tabs,
+                "recent_downloads": session.downloads[-10:],
+                "takeover_url": self._current_takeover_url(session),
+                "remote_access": self._session_remote_access_info(session),
+                "preset": "fast",
+            }
+
+        # normal and rich share the same path; rich uses a larger text/interactable limit
+        effective_limit = min(limit * 2, 200) if preset == "rich" else limit
+        interactables = await session.page.evaluate(INTERACTABLES_SCRIPT, effective_limit)
+        text_limit = 4000 if preset == "rich" else 2000
+        summary = await self._page_summary(session.page, text_limit=text_limit)
         ocr = await self.ocr.extract_from_image(screenshot["path"])
         tabs = await self._tab_summaries(session)
         return {
@@ -3051,6 +3103,7 @@ class BrowserManager:
             "recent_downloads": session.downloads[-10:],
             "takeover_url": self._current_takeover_url(session),
             "remote_access": self._session_remote_access_info(session),
+            "preset": preset,
         }
 
     async def _light_snapshot(self, session: BrowserSession, *, label: str) -> dict[str, Any]:
@@ -3091,8 +3144,8 @@ class BrowserManager:
         except Exception as exc:  # pragma: no cover - depends on external browser support
             logger.warning("failed to stop tracing for session %s: %s", session.id, exc)
 
-    async def _page_summary(self, page: Page) -> dict[str, Any]:
-        summary = await page.evaluate(PAGE_SUMMARY_SCRIPT, 2000)
+    async def _page_summary(self, page: Page, text_limit: int = 2000) -> dict[str, Any]:
+        summary = await page.evaluate(PAGE_SUMMARY_SCRIPT, text_limit)
         accessibility_outline = await self._accessibility_outline(page)
         return {
             "title": await page.title(),
@@ -3677,3 +3730,158 @@ class BrowserManager:
     @staticmethod
     def _timestamp() -> str:
         return datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+
+    # ── Screenshot diff ──────────────────────────────────────────────────────
+
+    async def screenshot_diff(self, session_id: str) -> dict[str, Any]:
+        """Capture a new screenshot and compare pixel-by-pixel with the previous one."""
+        session = await self.get_session(session_id)
+        async with session.lock:
+            # Capture current state
+            new_shot = await self._capture_screenshot(session, "diff-b")
+
+            # Find the most recent prior screenshot (not the one we just took)
+            artifact_dir = session.artifact_dir
+            shots = sorted(
+                [p for p in artifact_dir.glob("*.png") if "diff-b" not in p.name],
+                key=lambda p: p.stat().st_mtime,
+            )
+            if not shots:
+                return {
+                    "error": "no previous screenshot to compare against",
+                    "b_url": new_shot["url"],
+                    "b_path": new_shot["path"],
+                }
+
+            prev_path = shots[-1]
+            prev_url = f"/artifacts/{session_id}/{prev_path.name}"
+            return await asyncio.to_thread(
+                self._compute_diff,
+                str(prev_path),
+                new_shot["path"],
+                prev_url,
+                new_shot["url"],
+                session.artifact_dir,
+            )
+
+    @staticmethod
+    def _compute_diff(
+        a_path: str,
+        b_path: str,
+        a_url: str,
+        b_url: str,
+        artifact_dir: Path,
+    ) -> dict[str, Any]:
+        try:
+            from PIL import Image, ImageChops  # type: ignore[import]
+            import io
+
+            img_a = Image.open(a_path).convert("RGB")
+            img_b = Image.open(b_path).convert("RGB")
+
+            # Resize b to match a dimensions if they differ
+            if img_a.size != img_b.size:
+                img_b = img_b.resize(img_a.size, Image.LANCZOS)
+
+            diff = ImageChops.difference(img_a, img_b)
+            total_pixels = img_a.width * img_a.height
+
+            # Count non-black pixels in the diff
+            import struct
+            data = diff.tobytes()
+            changed = sum(
+                1 for i in range(0, len(data), 3)
+                if data[i] > 8 or data[i + 1] > 8 or data[i + 2] > 8
+            )
+            changed_pct = round(changed / total_pixels * 100, 4) if total_pixels > 0 else 0.0
+
+            # Save diff image
+            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+            diff_filename = f"{ts}-diff.png"
+            diff_path = artifact_dir / diff_filename
+            diff.save(str(diff_path))
+            diff_url = f"/artifacts/{artifact_dir.name}/{diff_filename}"
+
+            return {
+                "changed_pixels": changed,
+                "changed_pct": changed_pct,
+                "diff_url": diff_url,
+                "diff_path": str(diff_path),
+                "a_url": a_url,
+                "b_url": b_url,
+                "width": img_a.width,
+                "height": img_a.height,
+            }
+        except Exception as exc:
+            logger.warning("screenshot diff failed: %s", exc)
+            return {
+                "error": str(exc),
+                "changed_pixels": -1,
+                "changed_pct": -1.0,
+                "diff_url": None,
+                "diff_path": None,
+                "a_url": a_url,
+                "b_url": b_url,
+                "width": 0,
+                "height": 0,
+            }
+
+    # ── Auth profile export / import ────────────────────────────────────────
+
+    async def export_auth_profile(self, profile_name: str) -> dict[str, Any]:
+        """Package an auth profile dir as a .tar.gz and return the artifact path."""
+        import tarfile
+
+        auth_root = Path(self.settings.auth_root)
+        profile_dir = auth_root / profile_name
+        if not profile_dir.exists() or not profile_dir.is_dir():
+            raise FileNotFoundError(f"auth profile '{profile_name}' not found")
+
+        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        archive_name = f"{profile_name}-{ts}.tar.gz"
+        archive_path = auth_root / archive_name
+
+        await asyncio.to_thread(self._write_tar, profile_dir, archive_path)
+        return {
+            "profile_name": profile_name,
+            "archive_path": str(archive_path),
+            "archive_name": archive_name,
+            "download_url": f"/auth-export/{archive_name}",
+        }
+
+    @staticmethod
+    def _write_tar(source_dir: Path, dest: Path) -> None:
+        import tarfile
+
+        with tarfile.open(str(dest), "w:gz") as tar:
+            tar.add(str(source_dir), arcname=source_dir.name)
+
+    async def import_auth_profile(self, archive_path: str, *, overwrite: bool = False) -> dict[str, Any]:
+        """Extract a .tar.gz archive into the auth root."""
+        import tarfile
+
+        src = Path(archive_path)
+        if not src.exists():
+            raise FileNotFoundError(f"archive not found: {archive_path}")
+
+        auth_root = Path(self.settings.auth_root)
+
+        def _extract() -> str:
+            with tarfile.open(str(src), "r:gz") as tar:
+                # Determine profile name from top-level dir in archive
+                members = tar.getmembers()
+                if not members:
+                    raise ValueError("archive is empty")
+                top = members[0].name.split("/")[0]
+                dest_dir = auth_root / top
+                if dest_dir.exists() and not overwrite:
+                    raise FileExistsError(f"profile '{top}' already exists — pass overwrite=true")
+                tar.extractall(path=str(auth_root))
+                return top
+
+        profile_name = await asyncio.to_thread(_extract)
+        return {
+            "profile_name": profile_name,
+            "profile_path": str(auth_root / profile_name),
+            "imported": True,
+        }

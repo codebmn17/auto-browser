@@ -214,6 +214,19 @@ class Settings(BaseSettings):
         alias="USER_AGENT_POOL",
     )
 
+    # Approval webhooks — notified when approvals are created or decided
+    approval_webhook_url: str | None = Field(None, alias="APPROVAL_WEBHOOK_URL")
+    approval_webhook_secret: str | None = Field(None, alias="APPROVAL_WEBHOOK_SECRET")
+
+    # Perception presets — default mode for /observe
+    # fast: screenshot only (skip OCR and accessibility tree)
+    # normal: screenshot + OCR + accessibility tree (current default)
+    # rich: normal + extended text + full DOM outline
+    perception_preset_default: str = Field("normal", alias="PERCEPTION_PRESET_DEFAULT")
+
+    # SSE keepalive — how often to send a comment to prevent proxy timeouts
+    sse_keepalive_seconds: float = Field(15.0, alias="SSE_KEEPALIVE_SECONDS")
+
     # Proxy (session-level override supported in CreateSessionRequest)
     default_proxy_server: str | None = Field(None, alias="DEFAULT_PROXY_SERVER")
     default_proxy_username: str | None = Field(None, alias="DEFAULT_PROXY_USERNAME")

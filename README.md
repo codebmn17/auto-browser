@@ -47,6 +47,7 @@ make doctor
 
 Open:
 - API docs: `http://localhost:8000/docs`
+- Operator Dashboard: `http://localhost:8000/ui/`
 - Visual takeover: `http://localhost:6080/vnc.html?autoconnect=true&resize=scale`
 
 All published ports bind to `127.0.0.1` by default.
@@ -62,6 +63,18 @@ To see the rest of the common commands:
 ```bash
 make help
 ```
+
+## What’s new in v0.3.0
+
+- **Operator Dashboard** at `/ui/` — dark-mode session monitor with live screenshot, SSE event log, and one-click approval decisions
+- **Perception Presets** — `fast` (screenshot only, <200ms), `normal` (default), `rich` (extended context). Set per-request via `POST /sessions/{id}/observe`
+- **SSE Event Stream** — `GET /sessions/{id}/events` for live observe/action/approval events. Powers the dashboard and external monitoring
+- **Screenshot Diff** — `POST /sessions/{id}/screenshot/compare` — pixel diff against prior screenshot with change percentage
+- **Approval Webhooks** — `APPROVAL_WEBHOOK_URL` + `APPROVAL_WEBHOOK_SECRET` for Slack-compatible signed notifications when approvals are needed
+- **Auth Profile Export/Import** — `GET /auth-profiles/{name}/export` and `POST /auth-profiles/import` for portable auth state
+- **Python Client SDK** — `pip install auto-browser-client` — sync and async, SSE streaming, full coverage
+
+See [CHANGELOG.md](./CHANGELOG.md) for the full list.
 
 ## What’s included
 

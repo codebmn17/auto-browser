@@ -115,6 +115,30 @@ class ActionEnvelope(BaseModel):
     target: dict[str, Any]
 
 
+PerceptionPreset = Literal["fast", "normal", "rich"]
+
+
+class ObserveRequest(BaseModel):
+    preset: PerceptionPreset = "normal"
+    limit: int = Field(default=40, ge=1, le=200)
+
+
+class ImportAuthProfileRequest(BaseModel):
+    archive_path: str
+    overwrite: bool = False
+
+
+class ScreenshotDiffResponse(BaseModel):
+    changed_pixels: int
+    changed_pct: float
+    diff_url: str | None
+    diff_path: str | None
+    a_url: str
+    b_url: str
+    width: int
+    height: int
+
+
 ActionName = Literal[
     "navigate",
     "click",
