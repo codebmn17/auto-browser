@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import StreamingResponse
 
@@ -49,6 +49,7 @@ from .models import (
     SocialRepostRequest,
     SocialSearchRequest,
     SocialUnfollowRequest,
+    OpenTabRequest,
     TabIndexRequest,
     TypeRequest,
     UploadRequest,
@@ -502,6 +503,16 @@ async def activate_tab(session_id: str, payload: TabIndexRequest) -> dict:
 async def close_tab(session_id: str, payload: TabIndexRequest) -> dict:
     try:
         return await manager.close_tab(session_id, payload.index)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/sessions/{session_id}/tabs/open")
+async def open_tab(session_id: str, payload: OpenTabRequest) -> dict:
+    try:
+        return await manager.open_tab(session_id, payload.url, payload.activate)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
     except ValueError as exc:
@@ -1055,6 +1066,104 @@ async def screenshot_compare(session_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/sessions/{session_id}/replay", response_class=HTMLResponse)
+async def session_replay(session_id: str) -> HTMLResponse:
+    """Session replay — HTML viewer showing screenshots, audit events, and approvals."""
+    import html as _html
+
+    # Gather screenshots
+    artifact_dir = Path(settings.artifact_root) / session_id
+    screenshots: list[tuple[str, str]] = []  # (url, label)
+    if artifact_dir.is_dir():
+        for f in sorted(artifact_dir.glob("*.png")):
+            label = f.stem.replace("-", " ")
+            screenshots.append((f"/artifacts/{session_id}/{f.name}", label))
+
+    # Gather audit events for this session
+    try:
+        events = await manager.list_audit_events(session_id=session_id, limit=200)
+    except Exception:
+        events = []
+
+    # Gather session info
+    session_info: dict = {}
+    try:
+        session = manager.sessions.get(session_id)
+        if session:
+            session_info = await manager._session_summary(session)
+        else:
+            record = await manager.session_store.get(session_id)
+            session_info = record.model_dump()
+    except Exception:
+        pass
+
+    def esc(s: object) -> str:
+        return _html.escape(str(s or ""))
+
+    screenshots_html = "".join(
+        f'<figure><img src="{esc(url)}" loading="lazy"><figcaption>{esc(lbl)}</figcaption></figure>'
+        for url, lbl in screenshots
+    ) or "<p class=muted>No screenshots captured yet.</p>"
+
+    events_html = "".join(
+        f'<tr><td class=muted>{esc(e.get("timestamp","")[:19])}</td>'
+        f'<td>{esc(e.get("event_type",""))}</td>'
+        f'<td>{esc(e.get("operator_id",""))}</td>'
+        f'<td>{esc(str(e.get("data",""))[:120])}</td></tr>'
+        for e in events
+    ) or '<tr><td colspan=4 class=muted>No audit events.</td></tr>'
+
+    status = esc(session_info.get("status", "unknown"))
+    current_url = esc(session_info.get("url", ""))
+    title = esc(session_info.get("title", session_id))
+    created = esc(str(session_info.get("created_at", ""))[:19])
+
+    body = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Replay — {esc(session_id)}</title>
+<style>
+  :root {{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#c9d1d9;--muted:#8b949e;--accent:#58a6ff}}
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;padding:24px}}
+  h1{{font-size:18px;font-weight:600;margin-bottom:4px}}
+  h2{{font-size:14px;font-weight:600;margin:24px 0 12px;border-bottom:1px solid var(--border);padding-bottom:6px}}
+  .meta{{color:var(--muted);font-size:12px;margin-bottom:20px}}
+  .meta span{{margin-right:16px}}
+  .gallery{{display:flex;flex-wrap:wrap;gap:12px}}
+  figure{{background:var(--surface);border:1px solid var(--border);border-radius:6px;overflow:hidden;max-width:340px}}
+  figure img{{width:100%;display:block}}
+  figcaption{{font-size:11px;color:var(--muted);padding:6px 8px}}
+  table{{width:100%;border-collapse:collapse;font-size:12px}}
+  th{{text-align:left;padding:6px 8px;color:var(--muted);border-bottom:1px solid var(--border);font-weight:500}}
+  td{{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;word-break:break-word}}
+  .muted{{color:var(--muted)}}
+  a{{color:var(--accent);text-decoration:none}}
+</style>
+</head>
+<body>
+<h1>Session Replay</h1>
+<div class="meta">
+  <span>ID: <strong>{esc(session_id)}</strong></span>
+  <span>Status: <strong>{status}</strong></span>
+  <span>Created: {created}</span>
+  <span>Title: {title}</span>
+  {f'<span>URL: <a href="{current_url}" target="_blank">{current_url}</a></span>' if current_url else ''}
+</div>
+<h2>Screenshots ({len(screenshots)})</h2>
+<div class="gallery">{screenshots_html}</div>
+<h2>Audit Events ({len(events)})</h2>
+<table>
+  <thead><tr><th>Time</th><th>Type</th><th>Operator</th><th>Data</th></tr></thead>
+  <tbody>{events_html}</tbody>
+</table>
+</body>
+</html>"""
+    return HTMLResponse(content=body)
 
 
 @app.get("/auth-profiles/{profile_name}/export")

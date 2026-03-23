@@ -994,6 +994,28 @@ class BrowserManager:
         async with session.lock:
             return await self._tab_summaries(session)
 
+    async def open_tab(self, session_id: str, url: str | None, activate: bool) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+        async with session.lock:
+            new_page = await session.context.new_page()
+            self._attach_page_listeners(new_page, session)
+            if url:
+                await new_page.goto(url, wait_until="domcontentloaded")
+                await self._settle(new_page)
+            if activate:
+                session.page = new_page
+                if hasattr(new_page, "bring_to_front"):
+                    await new_page.bring_to_front()
+            pages = self._tab_pages(session)
+            new_index = pages.index(new_page) if new_page in pages else len(pages) - 1
+            await self._persist_session(session, status="active")
+            return {
+                "index": new_index,
+                "activated": activate,
+                "session": await self._session_summary(session),
+                "tabs": await self._tab_summaries(session),
+            }
+
     async def activate_tab(self, session_id: str, index: int) -> dict[str, Any]:
         session = await self.get_session(session_id)
         async with session.lock:

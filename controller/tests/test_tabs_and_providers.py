@@ -34,6 +34,11 @@ class FakeTabContext:
     def __init__(self) -> None:
         self.pages: list[FakeTabPage] = []
 
+    async def new_page(self) -> "FakeTabPage":
+        page = FakeTabPage(self, "about:blank", "New Tab")
+        self.pages.append(page)
+        return page
+
 
 class BrowserTabManagementTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -98,6 +103,24 @@ class BrowserTabManagementTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(result["tabs"]), 1)
         self.assertEqual(result["tabs"][0]["url"], "https://example.com")
+
+    async def test_open_tab_adds_new_page_and_activates(self) -> None:
+        result = await self.manager.open_tab(self.session.id, url=None, activate=True)
+
+        self.assertEqual(len(result["tabs"]), 3)
+        self.assertEqual(result["activated"], True)
+        # New page is now the active page
+        self.assertEqual(self.session.page.url, "about:blank")
+        self.assertEqual(self.session.page.front_calls, 1)
+
+    async def test_open_tab_without_activate_keeps_current_page(self) -> None:
+        original_page = self.session.page
+        result = await self.manager.open_tab(self.session.id, url=None, activate=False)
+
+        self.assertEqual(len(result["tabs"]), 3)
+        self.assertEqual(result["activated"], False)
+        # Active page unchanged
+        self.assertIs(self.session.page, original_page)
 
 
 class ProviderRegistryLoginCommandTests(unittest.TestCase):

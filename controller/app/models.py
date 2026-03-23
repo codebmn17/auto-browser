@@ -103,6 +103,11 @@ class TabIndexRequest(BaseModel):
     index: int = Field(ge=0)
 
 
+class OpenTabRequest(BaseModel):
+    url: str | None = None
+    activate: bool = True
+
+
 class SessionEnvelope(BaseModel):
     session: dict[str, Any]
 
