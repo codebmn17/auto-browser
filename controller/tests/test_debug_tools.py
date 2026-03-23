@@ -45,6 +45,7 @@ class DebugToolsTests(unittest.IsolatedAsyncioTestCase):
         self.settings.auth_root = str(root / "auth")
         self.settings.approval_root = str(root / "approvals")
         self.settings.session_store_root = str(root / "sessions")
+        self.settings.audit_root = str(root / "audit")
         self.settings.enable_tracing = True
         self.manager = BrowserManager(self.settings)
         await self.manager.session_store.startup()

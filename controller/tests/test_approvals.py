@@ -45,6 +45,7 @@ class ApprovalQueueTests(unittest.IsolatedAsyncioTestCase):
         self.settings.auth_root = str(root / "auth")
         self.settings.approval_root = str(root / "approvals")
         self.settings.session_store_root = str(root / "sessions")
+        self.settings.audit_root = str(root / "audit")
         self.manager = BrowserManager(self.settings)
 
         artifact_dir = Path(self.settings.artifact_root) / "session-1"

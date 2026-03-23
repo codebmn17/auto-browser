@@ -74,6 +74,7 @@ class RemoteAccessInfoTests(unittest.TestCase):
         self.settings.auth_root = str(root / "auth")
         self.settings.approval_root = str(root / "approvals")
         self.settings.session_store_root = str(root / "sessions")
+        self.settings.audit_root = str(root / "audit")
         self.settings.takeover_url = "http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale"
         self.settings.remote_access_info_path = str(self.info_path)
         self.settings.remote_access_stale_after_seconds = 30
@@ -156,6 +157,7 @@ class RemoteAccessPropagationTests(unittest.IsolatedAsyncioTestCase):
         self.settings.auth_root = str(root / "auth")
         self.settings.approval_root = str(root / "approvals")
         self.settings.session_store_root = str(root / "sessions")
+        self.settings.audit_root = str(root / "audit")
         self.settings.takeover_url = "http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale"
         self.settings.remote_access_info_path = str(self.info_path)
         self.settings.remote_access_stale_after_seconds = 30

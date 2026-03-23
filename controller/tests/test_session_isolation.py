@@ -143,6 +143,7 @@ class DockerBrowserNodeProvisionerTests(unittest.IsolatedAsyncioTestCase):
                 AUTH_ROOT=str(data_root / "auth"),
                 APPROVAL_ROOT=str(data_root / "approvals"),
                 SESSION_STORE_ROOT=str(data_root / "sessions"),
+                AUDIT_ROOT=str(data_root / "audit"),
                 ISOLATED_TAKEOVER_HOST="127.0.0.1",
             )
             controller_container = FakeDockerContainer(
@@ -183,6 +184,7 @@ class BrowserIsolationSummaryTests(unittest.IsolatedAsyncioTestCase):
                 AUTH_ROOT=str(root / "auth"),
                 APPROVAL_ROOT=str(root / "approvals"),
                 SESSION_STORE_ROOT=str(root / "sessions"),
+                AUDIT_ROOT=str(root / "audit"),
                 REMOTE_ACCESS_INFO_PATH=str(root / "tunnels/reverse-ssh.json"),
             )
             manager = BrowserManager(settings)
@@ -244,6 +246,7 @@ class BrowserIsolationSummaryTests(unittest.IsolatedAsyncioTestCase):
                 AUTH_ROOT=str(root / "auth"),
                 APPROVAL_ROOT=str(root / "approvals"),
                 SESSION_STORE_ROOT=str(root / "sessions"),
+                AUDIT_ROOT=str(root / "audit"),
                 REMOTE_ACCESS_INFO_PATH=str(root / "tunnels/reverse-ssh.json"),
             )
             manager = BrowserManager(settings)
@@ -299,6 +302,7 @@ class BrowserIsolationSummaryTests(unittest.IsolatedAsyncioTestCase):
                 AUTH_ROOT=str(root / "auth"),
                 APPROVAL_ROOT=str(root / "approvals"),
                 SESSION_STORE_ROOT=str(root / "sessions"),
+                AUDIT_ROOT=str(root / "audit"),
                 REMOTE_ACCESS_INFO_PATH=str(root / "tunnels/reverse-ssh.json"),
                 ISOLATED_TUNNEL_ENABLED="true",
                 ISOLATED_TUNNEL_HOST="bastion.example.com",
@@ -386,6 +390,7 @@ class BrowserIsolationSummaryTests(unittest.IsolatedAsyncioTestCase):
                 AUTH_ROOT=str(root / "auth"),
                 APPROVAL_ROOT=str(root / "approvals"),
                 SESSION_STORE_ROOT=str(root / "sessions"),
+                AUDIT_ROOT=str(root / "audit"),
                 ISOLATED_TUNNEL_ENABLED="true",
                 ISOLATED_TUNNEL_HOST="bastion.example.com",
                 ISOLATED_TUNNEL_USER="tunnel",
@@ -477,6 +482,7 @@ class BrowserSessionRollbackTests(unittest.IsolatedAsyncioTestCase):
                 AUTH_ROOT=str(root / "auth"),
                 APPROVAL_ROOT=str(root / "approvals"),
                 SESSION_STORE_ROOT=str(root / "sessions"),
+                AUDIT_ROOT=str(root / "audit"),
             )
             manager = BrowserManager(settings)
             runtime = IsolatedBrowserRuntime(
