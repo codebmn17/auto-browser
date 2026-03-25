@@ -47,6 +47,7 @@ class McpHttpTransport:
         server_title: str | None = None,
         allowed_origins: list[str] | None = None,
         session_store_path: str | None = None,
+        manager=None,
     ):
         self.tool_gateway = tool_gateway
         self.server_name = server_name
@@ -55,6 +56,7 @@ class McpHttpTransport:
         self.allowed_origins = tuple(allowed_origins or [])
         self._sessions: dict[str, McpSession] = {}
         self._session_store_path = Path(session_store_path).resolve() if session_store_path else None
+        self.manager = manager  # BrowserManager for Resources protocol
         self._load_sessions()
 
     async def handle_post_request(self, request: Request) -> Response:
@@ -187,12 +189,138 @@ class McpHttpTransport:
                 tool_response.model_dump(exclude_none=True),
                 headers=self._session_headers(session),
             )
+
+        # ── MCP Resources Protocol ─────────────────────────────────────────
+        if method == "resources/list":
+            return self._json_result_response(
+                request_id,
+                {"resources": await self._list_resources()},
+                headers=self._session_headers(session),
+            )
+        if method == "resources/read":
+            uri = params.get("uri", "")
+            content = await self._read_resource(uri)
+            if content is None:
+                return self._json_error_response(
+                    request_id,
+                    -32002,
+                    f"Resource not found: {uri}",
+                    headers=self._session_headers(session),
+                )
+            return self._json_result_response(
+                request_id,
+                {"contents": [content]},
+                headers=self._session_headers(session),
+            )
+
         return self._json_error_response(
             request_id,
             -32601,
             f"Unknown MCP method: {method}",
             headers=self._session_headers(session),
         )
+
+    async def _list_resources(self) -> list[dict[str, Any]]:
+        """Return the list of subscribable browser resources."""
+        resources: list[dict[str, Any]] = [
+            {
+                "uri": "browser://sessions",
+                "name": "Active Sessions",
+                "description": "List of all active browser sessions",
+                "mimeType": "application/json",
+            },
+        ]
+        if self.manager is None:
+            return resources
+
+        for session_id in list(self.manager.sessions.keys()):
+            resources += [
+                {
+                    "uri": f"browser://{session_id}/screenshot",
+                    "name": f"Screenshot [{session_id}]",
+                    "description": f"Latest screenshot for session {session_id}",
+                    "mimeType": "image/png",
+                },
+                {
+                    "uri": f"browser://{session_id}/dom",
+                    "name": f"DOM [{session_id}]",
+                    "description": f"Current page HTML for session {session_id}",
+                    "mimeType": "text/html",
+                },
+                {
+                    "uri": f"browser://{session_id}/console",
+                    "name": f"Console [{session_id}]",
+                    "description": f"Recent console messages for session {session_id}",
+                    "mimeType": "application/json",
+                },
+                {
+                    "uri": f"browser://{session_id}/network",
+                    "name": f"Network Log [{session_id}]",
+                    "description": f"Recent network requests/responses for session {session_id}",
+                    "mimeType": "application/json",
+                },
+            ]
+        return resources
+
+    async def _read_resource(self, uri: str) -> dict[str, Any] | None:
+        """Fetch the content of a specific resource URI."""
+        if uri == "browser://sessions":
+            if self.manager is None:
+                return {"uri": uri, "mimeType": "application/json", "text": "[]"}
+            sessions = await self.manager.list_sessions()
+            return {
+                "uri": uri,
+                "mimeType": "application/json",
+                "text": json.dumps(sessions, ensure_ascii=False),
+            }
+
+        # Parse browser://{session_id}/{resource}
+        if not uri.startswith("browser://"):
+            return None
+        path = uri[len("browser://"):]
+        parts = path.split("/", 1)
+        if len(parts) != 2:
+            return None
+        session_id, resource = parts
+
+        if self.manager is None:
+            return None
+
+        try:
+            if resource == "screenshot":
+                shot = await self.manager.capture_screenshot(session_id, label="mcp-resource")
+                shot_path = Path(shot["screenshot_path"])
+                if shot_path.exists():
+                    import base64
+                    img_b64 = base64.standard_b64encode(shot_path.read_bytes()).decode()
+                    return {"uri": uri, "mimeType": "image/png", "blob": img_b64}
+                return None
+
+            if resource == "dom":
+                session = await self.manager.get_session(session_id)
+                html = await session.page.content()
+                return {"uri": uri, "mimeType": "text/html", "text": html}
+
+            if resource == "console":
+                result = await self.manager.get_console_messages(session_id, limit=50)
+                return {
+                    "uri": uri,
+                    "mimeType": "application/json",
+                    "text": json.dumps(result.get("items", []), ensure_ascii=False),
+                }
+
+            if resource == "network":
+                result = await self.manager.get_network_log(session_id, limit=100)
+                return {
+                    "uri": uri,
+                    "mimeType": "application/json",
+                    "text": json.dumps(result.get("entries", []), ensure_ascii=False),
+                }
+
+        except Exception as exc:
+            logger.debug("resource read error for %s: %s", uri, exc)
+
+        return None
 
     def _handle_initialize(self, request_id: Any, params: dict[str, Any]) -> Response:
         requested_version = params.get("protocolVersion")
@@ -218,7 +346,10 @@ class McpHttpTransport:
 
         result = {
             "protocolVersion": session.protocol_version,
-            "capabilities": {"tools": {}},
+            "capabilities": {
+                "tools": {},
+                "resources": {"subscribe": False},
+            },
             "serverInfo": {
                 "name": self.server_name,
                 "title": self.server_title,

@@ -21,6 +21,9 @@ from .models import (
 from .social_errors import SocialActionError
 
 
+# ── New input models for v0.5.0 features ──────────────────────────────────
+
+
 class EmptyInput(BaseModel):
     pass
 
@@ -169,6 +172,135 @@ class SocialSearchInput(SessionIdInput):
     query: str = Field(min_length=1, max_length=500)
 
 
+# ── v0.5.0 new input models ────────────────────────────────────────────────
+
+class GetNetworkLogInput(SessionIdInput):
+    limit: int = Field(default=100, ge=1, le=1000)
+    method: str | None = Field(default=None, max_length=10)
+    url_contains: str | None = Field(default=None, max_length=500)
+
+
+class ForkSessionInput(SessionIdInput):
+    name: str | None = Field(default=None, max_length=200)
+    start_url: str | None = Field(default=None, max_length=2000)
+
+
+class EvalJsInput(SessionIdInput):
+    expression: str = Field(min_length=1, max_length=50000)
+
+
+class WaitForSelectorInput(SessionIdInput):
+    selector: str = Field(min_length=1, max_length=2000)
+    timeout_ms: int = Field(default=10000, ge=100, le=60000)
+    state: Literal["visible", "hidden", "attached", "detached"] = "visible"
+
+
+class GetCookiesInput(SessionIdInput):
+    urls: list[str] | None = Field(default=None)
+
+
+class SetCookiesInput(SessionIdInput):
+    cookies: list[dict[str, Any]]
+
+
+class GetStorageInput(SessionIdInput):
+    storage_type: Literal["local", "session"] = "local"
+    key: str | None = Field(default=None, max_length=500)
+
+
+class SetStorageInput(SessionIdInput):
+    storage_type: Literal["local", "session"] = "local"
+    key: str = Field(min_length=1, max_length=500)
+    value: str = Field(max_length=100000)
+
+
+class SetViewportInput(SessionIdInput):
+    width: int = Field(ge=320, le=3840)
+    height: int = Field(ge=240, le=2160)
+
+
+class FindElementsInput(SessionIdInput):
+    selector: str = Field(min_length=1, max_length=2000)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class DragDropInput(SessionIdInput):
+    source_selector: str | None = Field(default=None, max_length=2000)
+    source_x: float | None = None
+    source_y: float | None = None
+    target_selector: str | None = Field(default=None, max_length=2000)
+    target_x: float | None = None
+    target_y: float | None = None
+
+
+class ExportScriptInput(SessionIdInput):
+    pass
+
+
+class CdpAttachInput(BaseModel):
+    cdp_url: str = Field(min_length=1, max_length=500)
+
+
+class ForkCdpInput(BaseModel):
+    cdp_url: str = Field(min_length=1, max_length=500)
+    name: str | None = Field(default=None, max_length=200)
+    start_url: str | None = Field(default=None, max_length=2000)
+
+
+class VisionFindInput(SessionIdInput):
+    description: str = Field(min_length=1, max_length=500)
+    take_screenshot: bool = True
+
+
+class ShareSessionInput(SessionIdInput):
+    ttl_minutes: int = Field(default=60, ge=1, le=1440)
+
+
+class ValidateShareTokenInput(BaseModel):
+    token: str = Field(min_length=1, max_length=500)
+
+
+class ShadowBrowseInput(SessionIdInput):
+    pass
+
+
+class ProxyPersonaNameInput(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class CreateProxyPersonaInput(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    server: str = Field(min_length=1, max_length=500)
+    username: str | None = Field(default=None, max_length=200)
+    password: str | None = Field(default=None, max_length=500, repr=False)
+    description: str = Field(default="", max_length=500)
+
+
+class CronJobIdInput(BaseModel):
+    job_id: str = Field(min_length=1, max_length=50)
+
+
+class CreateCronJobInput(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    goal: str = Field(min_length=1, max_length=5000)
+    schedule: str | None = Field(default=None, max_length=100)
+    start_url: str | None = Field(default=None, max_length=2000)
+    auth_profile: str | None = Field(default=None, max_length=200)
+    proxy_persona: str | None = Field(default=None, max_length=200)
+    max_steps: int = Field(default=20, ge=1, le=100)
+    enabled: bool = True
+    webhook_enabled: bool = False
+
+
+class TriggerCronJobInput(CronJobIdInput):
+    webhook_key: str | None = Field(default=None, max_length=200)
+
+
+class GetPageHtmlInput(SessionIdInput):
+    full_page: bool = False
+    text_only: bool = False
+
+
 @dataclass
 class ToolSpec:
     name: str
@@ -179,11 +311,26 @@ class ToolSpec:
 
 
 class McpToolGateway:
-    def __init__(self, *, manager, orchestrator, job_queue, tool_profile: str = "curated"):
+    def __init__(
+        self,
+        *,
+        manager,
+        orchestrator,
+        job_queue,
+        tool_profile: str = "curated",
+        cron_service=None,
+        share_manager=None,
+        proxy_store=None,
+        vision_targeter=None,
+    ):
         self.manager = manager
         self.orchestrator = orchestrator
         self.job_queue = job_queue
         self.tool_profile = "full" if tool_profile == "full" else "curated"
+        self.cron_service = cron_service
+        self.share_manager = share_manager
+        self.proxy_store = proxy_store
+        self.vision_targeter = vision_targeter
         self._tools = {
             spec.name: spec
             for spec in [
@@ -488,6 +635,261 @@ class McpToolGateway:
                     input_model=SocialSearchInput,
                     handler=self._social_search,
                 ),
+                # ── v0.5.0: Network Inspector ──────────────────────────────
+                ToolSpec(
+                    name="browser.get_network_log",
+                    description=(
+                        "Return captured HTTP request/response entries for a session. "
+                        "Filtered by method (GET/POST/...) or URL substring. "
+                        "All sensitive headers and bodies are automatically PII-scrubbed."
+                    ),
+                    input_model=GetNetworkLogInput,
+                    handler=self._get_network_log,
+                ),
+                # ── v0.5.0: Session Forking ────────────────────────────────
+                ToolSpec(
+                    name="browser.fork_session",
+                    description=(
+                        "Fork a session: snapshot its cookies, storage state, and current URL, "
+                        "then create a new independent session with that state. "
+                        "Useful for branching workflows or running parallel variants."
+                    ),
+                    input_model=ForkSessionInput,
+                    handler=self._fork_session,
+                ),
+                # ── v0.5.0: DOM / JS Tools ─────────────────────────────────
+                ToolSpec(
+                    name="browser.eval_js",
+                    description=(
+                        "Execute a JavaScript expression in the current page context "
+                        "and return the result. Use for DOM queries, value extraction, "
+                        "or lightweight scripting that has no dedicated tool."
+                    ),
+                    input_model=EvalJsInput,
+                    handler=self._eval_js,
+                ),
+                ToolSpec(
+                    name="browser.wait_for_selector",
+                    description=(
+                        "Wait for a CSS selector to reach a specific state "
+                        "(visible, hidden, attached, detached). "
+                        "Returns when the condition is met or raises on timeout."
+                    ),
+                    input_model=WaitForSelectorInput,
+                    handler=self._wait_for_selector,
+                ),
+                ToolSpec(
+                    name="browser.get_html",
+                    description=(
+                        "Get the HTML source of the current page. "
+                        "Set text_only=true to strip tags and return plain text. "
+                        "Set full_page=false (default) for visible viewport only."
+                    ),
+                    input_model=GetPageHtmlInput,
+                    handler=self._get_html,
+                ),
+                ToolSpec(
+                    name="browser.find_elements",
+                    description=(
+                        "Find all elements matching a CSS selector and return their "
+                        "text, href, value, bounding box, and visibility. "
+                        "Useful before clicking or scraping multiple items."
+                    ),
+                    input_model=FindElementsInput,
+                    handler=self._find_elements,
+                ),
+                ToolSpec(
+                    name="browser.drag_drop",
+                    description=(
+                        "Drag from one element or coordinate to another. "
+                        "Provide source_selector OR (source_x, source_y), "
+                        "and target_selector OR (target_x, target_y)."
+                    ),
+                    input_model=DragDropInput,
+                    handler=self._drag_drop,
+                ),
+                ToolSpec(
+                    name="browser.set_viewport",
+                    description=(
+                        "Resize the browser viewport to the specified width and height."
+                    ),
+                    input_model=SetViewportInput,
+                    handler=self._set_viewport,
+                ),
+                # ── v0.5.0: Cookies & Storage ──────────────────────────────
+                ToolSpec(
+                    name="browser.get_cookies",
+                    description=(
+                        "Get all cookies for the current session context. "
+                        "Optionally filter by URL(s)."
+                    ),
+                    input_model=GetCookiesInput,
+                    handler=self._get_cookies,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="browser.set_cookies",
+                    description=(
+                        "Set one or more cookies in the current session context. "
+                        "Each cookie dict must have at minimum: name, value, domain."
+                    ),
+                    input_model=SetCookiesInput,
+                    handler=self._set_cookies,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="browser.get_local_storage",
+                    description=(
+                        "Read a key (or all keys) from localStorage or sessionStorage "
+                        "in the current page context."
+                    ),
+                    input_model=GetStorageInput,
+                    handler=self._get_local_storage,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="browser.set_local_storage",
+                    description=(
+                        "Write a key-value pair to localStorage or sessionStorage "
+                        "in the current page context."
+                    ),
+                    input_model=SetStorageInput,
+                    handler=self._set_local_storage,
+                    profiles=("full",),
+                ),
+                # ── v0.5.0: Playwright Script Export ──────────────────────
+                ToolSpec(
+                    name="browser.export_script",
+                    description=(
+                        "Export the current session's recorded actions as a runnable "
+                        "Playwright Python script. Returns the script as a string "
+                        "that can be saved to a .py file and run standalone."
+                    ),
+                    input_model=ExportScriptInput,
+                    handler=self._export_script,
+                    profiles=("full",),
+                ),
+                # ── v0.5.0: CDP Attach ─────────────────────────────────────
+                ToolSpec(
+                    name="browser.cdp_attach",
+                    description=(
+                        "Attach to an already-running Chrome instance via CDP URL "
+                        "(e.g. http://localhost:9222). "
+                        "After attaching, new sessions will use pages from that browser. "
+                        "This allows automation of a real browser with existing logins."
+                    ),
+                    input_model=CdpAttachInput,
+                    handler=self._cdp_attach,
+                    profiles=("full",),
+                ),
+                # ── v0.5.0: Vision-Grounded Targeting ─────────────────────
+                ToolSpec(
+                    name="browser.find_by_vision",
+                    description=(
+                        "Use Claude Vision to find an element from a natural language description. "
+                        "Returns (x, y) coordinates you can pass to browser.execute_action click. "
+                        "Use when CSS selectors fail or the element has no reliable text anchor."
+                    ),
+                    input_model=VisionFindInput,
+                    handler=self._find_by_vision,
+                ),
+                # ── v0.5.0: Shared Session Links ───────────────────────────
+                ToolSpec(
+                    name="browser.share_session",
+                    description=(
+                        "Create a time-limited share token for a session. "
+                        "Returns a signed token that grants read-only observation access. "
+                        "Pass the token to a teammate or use with GET /share/{token}/observe."
+                    ),
+                    input_model=ShareSessionInput,
+                    handler=self._share_session,
+                    profiles=("full",),
+                ),
+                # ── v0.5.0: Shadow Browsing ────────────────────────────────
+                ToolSpec(
+                    name="browser.enable_shadow_browse",
+                    description=(
+                        "Switch a stuck session to headed (visible) mode for debugging. "
+                        "Creates a new headful browser window with the same state and URL. "
+                        "The agent can watch what's happening or a human can take over."
+                    ),
+                    input_model=ShadowBrowseInput,
+                    handler=self._enable_shadow_browse,
+                    profiles=("full",),
+                ),
+                # ── v0.5.0: Proxy Personas ─────────────────────────────────
+                ToolSpec(
+                    name="browser.list_proxy_personas",
+                    description=(
+                        "List all configured proxy personas. "
+                        "Each persona assigns a named static IP/proxy to a session "
+                        "to prevent platform fingerprinting across agents."
+                    ),
+                    input_model=EmptyInput,
+                    handler=self._list_proxy_personas,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="browser.create_proxy_persona",
+                    description=(
+                        "Create or update a named proxy persona with server URL and credentials. "
+                        "Use the persona name in CreateSessionRequest.proxy_persona."
+                    ),
+                    input_model=CreateProxyPersonaInput,
+                    handler=self._create_proxy_persona,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="browser.delete_proxy_persona",
+                    description="Delete a named proxy persona.",
+                    input_model=ProxyPersonaNameInput,
+                    handler=self._delete_proxy_persona,
+                    profiles=("full",),
+                ),
+                # ── v0.5.0: Cron / Webhook Triggers ───────────────────────
+                ToolSpec(
+                    name="browser.list_cron_jobs",
+                    description="List all configured cron / webhook trigger jobs.",
+                    input_model=EmptyInput,
+                    handler=self._list_cron_jobs,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="browser.create_cron_job",
+                    description=(
+                        "Create a browser automation job that runs on a cron schedule "
+                        "and/or via an HTTP webhook trigger. "
+                        "The agent will pursue 'goal' for up to max_steps actions."
+                    ),
+                    input_model=CreateCronJobInput,
+                    handler=self._create_cron_job,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="browser.delete_cron_job",
+                    description="Delete a cron / webhook trigger job.",
+                    input_model=CronJobIdInput,
+                    handler=self._delete_cron_job,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="browser.trigger_cron_job",
+                    description="Immediately trigger a cron job (internal — no webhook auth required).",
+                    input_model=CronJobIdInput,
+                    handler=self._trigger_cron_job,
+                    profiles=("full",),
+                ),
+                # ── v0.5.0: PII Scrubber Status ───────────────────────────
+                ToolSpec(
+                    name="browser.pii_scrubber_status",
+                    description=(
+                        "Return the current PII scrubber configuration: which patterns "
+                        "are active, which layers are enabled, and the replacement string."
+                    ),
+                    input_model=EmptyInput,
+                    handler=self._pii_scrubber_status,
+                    profiles=("full",),
+                ),
             ]
             if self.tool_profile in spec.profiles
         }
@@ -728,3 +1130,239 @@ class McpToolGateway:
 
     async def _social_search(self, payload: SocialSearchInput) -> dict[str, Any]:
         return await self.manager.search_page(payload.session_id, query=payload.query)
+
+    # ── v0.5.0 handlers ────────────────────────────────────────────────────
+
+    async def _get_network_log(self, payload: GetNetworkLogInput) -> dict[str, Any]:
+        return await self.manager.get_network_log(
+            payload.session_id,
+            limit=payload.limit,
+            method=payload.method,
+            url_contains=payload.url_contains,
+        )
+
+    async def _fork_session(self, payload: ForkSessionInput) -> dict[str, Any]:
+        return await self.manager.fork_session(
+            payload.session_id,
+            name=payload.name,
+            start_url=payload.start_url,
+        )
+
+    async def _eval_js(self, payload: EvalJsInput) -> dict[str, Any]:
+        session = await self.manager.get_session(payload.session_id)
+        result = await session.page.evaluate(payload.expression)
+        return {"session_id": payload.session_id, "result": result}
+
+    async def _wait_for_selector(self, payload: WaitForSelectorInput) -> dict[str, Any]:
+        session = await self.manager.get_session(payload.session_id)
+        await session.page.wait_for_selector(
+            payload.selector,
+            timeout=payload.timeout_ms,
+            state=payload.state,
+        )
+        return {"session_id": payload.session_id, "selector": payload.selector, "state": payload.state}
+
+    async def _get_html(self, payload: GetPageHtmlInput) -> dict[str, Any]:
+        session = await self.manager.get_session(payload.session_id)
+        if payload.text_only:
+            text = await session.page.evaluate(
+                "() => document.body ? document.body.innerText : ''"
+            )
+            return {"session_id": payload.session_id, "content": text, "type": "text"}
+        html = await session.page.content()
+        return {"session_id": payload.session_id, "content": html, "type": "html"}
+
+    async def _find_elements(self, payload: FindElementsInput) -> dict[str, Any]:
+        session = await self.manager.get_session(payload.session_id)
+        elements = await session.page.evaluate(
+            """([selector, limit]) => {
+                const els = [...document.querySelectorAll(selector)].slice(0, limit);
+                return els.map(el => {
+                    const r = el.getBoundingClientRect();
+                    return {
+                        tag: el.tagName.toLowerCase(),
+                        text: el.innerText?.substring(0, 200) || '',
+                        value: el.value || null,
+                        href: el.href || null,
+                        id: el.id || null,
+                        class: el.className || null,
+                        visible: r.width > 0 && r.height > 0,
+                        x: Math.round(r.x), y: Math.round(r.y),
+                        width: Math.round(r.width), height: Math.round(r.height),
+                    };
+                });
+            }""",
+            [payload.selector, payload.limit],
+        )
+        return {"session_id": payload.session_id, "selector": payload.selector, "elements": elements}
+
+    async def _drag_drop(self, payload: DragDropInput) -> dict[str, Any]:
+        session = await self.manager.get_session(payload.session_id)
+
+        # Resolve source coordinates
+        if payload.source_selector:
+            box = await session.page.locator(payload.source_selector).first.bounding_box()
+            sx = box["x"] + box["width"] / 2 if box else 0
+            sy = box["y"] + box["height"] / 2 if box else 0
+        elif payload.source_x is not None and payload.source_y is not None:
+            sx, sy = payload.source_x, payload.source_y
+        else:
+            raise ValueError("Provide source_selector or source_x/source_y")
+
+        # Resolve target coordinates
+        if payload.target_selector:
+            box = await session.page.locator(payload.target_selector).first.bounding_box()
+            tx = box["x"] + box["width"] / 2 if box else 0
+            ty = box["y"] + box["height"] / 2 if box else 0
+        elif payload.target_x is not None and payload.target_y is not None:
+            tx, ty = payload.target_x, payload.target_y
+        else:
+            raise ValueError("Provide target_selector or target_x/target_y")
+
+        await session.page.mouse.move(sx, sy)
+        await session.page.mouse.down()
+        await session.page.mouse.move(tx, ty, steps=10)
+        await session.page.mouse.up()
+        return {"session_id": payload.session_id, "from": {"x": sx, "y": sy}, "to": {"x": tx, "y": ty}}
+
+    async def _set_viewport(self, payload: SetViewportInput) -> dict[str, Any]:
+        session = await self.manager.get_session(payload.session_id)
+        await session.page.set_viewport_size({"width": payload.width, "height": payload.height})
+        return {"session_id": payload.session_id, "width": payload.width, "height": payload.height}
+
+    async def _get_cookies(self, payload: GetCookiesInput) -> dict[str, Any]:
+        session = await self.manager.get_session(payload.session_id)
+        cookies = await session.context.cookies(urls=payload.urls)
+        return {"session_id": payload.session_id, "cookies": cookies}
+
+    async def _set_cookies(self, payload: SetCookiesInput) -> dict[str, Any]:
+        session = await self.manager.get_session(payload.session_id)
+        await session.context.add_cookies(payload.cookies)
+        return {"session_id": payload.session_id, "set": len(payload.cookies)}
+
+    async def _get_local_storage(self, payload: GetStorageInput) -> dict[str, Any]:
+        session = await self.manager.get_session(payload.session_id)
+        if payload.key:
+            script = f"() => window.{payload.storage_type}Storage.getItem({payload.key!r})"
+            value = await session.page.evaluate(script)
+            return {"session_id": payload.session_id, "key": payload.key, "value": value}
+        script = (
+            f"() => Object.fromEntries("
+            f"Object.keys(window.{payload.storage_type}Storage).map("
+            f"k => [k, window.{payload.storage_type}Storage.getItem(k)]))"
+        )
+        data = await session.page.evaluate(script)
+        return {"session_id": payload.session_id, "storage": data}
+
+    async def _set_local_storage(self, payload: SetStorageInput) -> dict[str, Any]:
+        session = await self.manager.get_session(payload.session_id)
+        script = f"([k, v]) => window.{payload.storage_type}Storage.setItem(k, v)"
+        await session.page.evaluate(script, [payload.key, payload.value])
+        return {"session_id": payload.session_id, "key": payload.key, "set": True}
+
+    async def _export_script(self, payload: ExportScriptInput) -> dict[str, Any]:
+        from .playwright_export import export_session_script
+        session = await self.manager.get_session(payload.session_id)
+        start_url = session.page.url
+        return await export_session_script(
+            payload.session_id,
+            self.manager.audit,
+            start_url=start_url,
+            viewport_w=self.manager.settings.default_viewport_width,
+            viewport_h=self.manager.settings.default_viewport_height,
+        )
+
+    async def _cdp_attach(self, payload: CdpAttachInput) -> dict[str, Any]:
+        return await self.manager.cdp_attach(payload.cdp_url)
+
+    async def _find_by_vision(self, payload: VisionFindInput) -> dict[str, Any]:
+        if self.vision_targeter is None:
+            raise RuntimeError(
+                "Vision targeting is not available — set ANTHROPIC_API_KEY to enable it."
+            )
+        session = await self.manager.get_session(payload.session_id)
+        if payload.take_screenshot:
+            screenshot = await self.manager.capture_screenshot(payload.session_id, label="vision")
+            screenshot_path = screenshot["screenshot_path"]
+        else:
+            # Use the most recent screenshot if available
+            from pathlib import Path
+            screenshots = sorted(
+                session.artifact_dir.glob("*.png"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if not screenshots:
+                raise RuntimeError("No screenshots available — take one first")
+            screenshot_path = str(screenshots[0])
+
+        result = await self.vision_targeter.find_element(screenshot_path, payload.description)
+        return {"session_id": payload.session_id, **result}
+
+    async def _share_session(self, payload: ShareSessionInput) -> dict[str, Any]:
+        if self.share_manager is None:
+            raise RuntimeError("Session sharing is not configured")
+        await self.manager.get_session(payload.session_id)  # verify session exists
+        return self.share_manager.create_token(
+            payload.session_id,
+            ttl_seconds=payload.ttl_minutes * 60,
+        )
+
+    async def _enable_shadow_browse(self, payload: ShadowBrowseInput) -> dict[str, Any]:
+        return await self.manager.enable_shadow_browse(payload.session_id)
+
+    async def _list_proxy_personas(self, _: EmptyInput) -> list[dict[str, Any]]:
+        if self.proxy_store is None:
+            return []
+        return self.proxy_store.list_personas()
+
+    async def _create_proxy_persona(self, payload: CreateProxyPersonaInput) -> dict[str, Any]:
+        if self.proxy_store is None:
+            raise RuntimeError("No PROXY_PERSONA_FILE configured")
+        return self.proxy_store.set_persona(
+            payload.name,
+            server=payload.server,
+            username=payload.username,
+            password=payload.password,
+            description=payload.description,
+        )
+
+    async def _delete_proxy_persona(self, payload: ProxyPersonaNameInput) -> dict[str, Any]:
+        if self.proxy_store is None:
+            raise RuntimeError("No PROXY_PERSONA_FILE configured")
+        deleted = self.proxy_store.delete_persona(payload.name)
+        return {"name": payload.name, "deleted": deleted}
+
+    async def _list_cron_jobs(self, _: EmptyInput) -> list[dict[str, Any]]:
+        if self.cron_service is None:
+            return []
+        return await self.cron_service.list_jobs()
+
+    async def _create_cron_job(self, payload: CreateCronJobInput) -> dict[str, Any]:
+        if self.cron_service is None:
+            raise RuntimeError("Cron service not initialized")
+        return await self.cron_service.create_job(
+            name=payload.name,
+            goal=payload.goal,
+            schedule=payload.schedule,
+            start_url=payload.start_url,
+            auth_profile=payload.auth_profile,
+            proxy_persona=payload.proxy_persona,
+            max_steps=payload.max_steps,
+            enabled=payload.enabled,
+            webhook_enabled=payload.webhook_enabled,
+        )
+
+    async def _delete_cron_job(self, payload: CronJobIdInput) -> dict[str, Any]:
+        if self.cron_service is None:
+            raise RuntimeError("Cron service not initialized")
+        deleted = await self.cron_service.delete_job(payload.job_id)
+        return {"job_id": payload.job_id, "deleted": deleted}
+
+    async def _trigger_cron_job(self, payload: CronJobIdInput) -> dict[str, Any]:
+        if self.cron_service is None:
+            raise RuntimeError("Cron service not initialized")
+        return await self.cron_service.trigger_job(payload.job_id)
+
+    async def _pii_scrubber_status(self, _: EmptyInput) -> dict[str, Any]:
+        return self.manager.get_pii_scrubber_status()

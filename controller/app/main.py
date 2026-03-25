@@ -17,9 +17,13 @@ from .audit import get_current_operator, reset_current_operator, set_current_ope
 from .approvals import ApprovalRequiredError
 from .browser_manager import BrowserManager
 from .config import get_settings
+from .cron_service import CronService
 from .maintenance import MaintenanceService
 from .mcp_transport import McpHttpTransport
 from .metrics import MetricsRecorder
+from .proxy_personas import ProxyPersonaStore
+from .session_share import SessionShareManager
+from .vision_target import VisionTargeter
 from .models import (
     ApprovalDecisionRequest,
     AgentRunRequest,
@@ -76,11 +80,27 @@ job_queue = AgentJobQueue(
     worker_count=settings.agent_job_worker_count,
     audit_store=manager.audit,
 )
+cron_service = CronService(
+    store_path=settings.cron_store_path,
+    max_jobs=settings.cron_max_jobs,
+    job_queue=job_queue,
+    manager=manager,
+)
+share_manager = SessionShareManager(
+    secret=settings.share_token_secret,
+    ttl_minutes=settings.share_token_ttl_minutes,
+)
+proxy_store = ProxyPersonaStore(settings.proxy_persona_file)
+vision_targeter = VisionTargeter.from_settings(settings)
 tool_gateway = McpToolGateway(
     manager=manager,
     orchestrator=orchestrator,
     job_queue=job_queue,
     tool_profile=settings.mcp_tool_profile,
+    cron_service=cron_service,
+    share_manager=share_manager,
+    proxy_store=proxy_store,
+    vision_targeter=vision_targeter,
 )
 rate_limiter = (
     SlidingWindowRateLimiter(
@@ -96,9 +116,10 @@ mcp_transport = McpHttpTransport(
     tool_gateway=tool_gateway,
     server_name="auto-browser",
     server_title="Auto Browser MCP",
-    server_version="0.4.0",
+    server_version="0.5.0",
     allowed_origins=settings.mcp_allowed_origin_list,
     session_store_path=settings.mcp_session_store_path,
+    manager=manager,
 )
 
 
@@ -111,18 +132,20 @@ async def lifespan(_: FastAPI):
         logger.warning("runtime policy warning: %s", warning)
     await manager.startup()
     await job_queue.startup()
+    await cron_service.startup()
     await maintenance.startup()
     try:
         yield
     finally:
         await maintenance.shutdown()
+        await cron_service.shutdown()
         await job_queue.shutdown()
         await manager.shutdown()
 
 
 app = FastAPI(
     title="Auto Browser Controller",
-    version="0.4.0",
+    version="0.5.0",
     lifespan=lifespan,
     summary="Visual Auto Browser control plane for LLM workflows.",
 )
@@ -1206,3 +1229,148 @@ async def close_session(session_id: str) -> dict:
         return await manager.close_session(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+
+
+# ── v0.5.0 endpoints ───────────────────────────────────────────────────────
+
+@app.get("/sessions/{session_id}/network-log")
+async def get_network_log(
+    session_id: str,
+    limit: int = 100,
+    method: str | None = None,
+    url_contains: str | None = None,
+) -> dict:
+    try:
+        return await manager.get_network_log(
+            session_id, limit=limit, method=method, url_contains=url_contains
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/sessions/{session_id}/fork")
+async def fork_session(session_id: str, name: str | None = None, start_url: str | None = None) -> dict:
+    try:
+        return await manager.fork_session(session_id, name=name, start_url=start_url)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/sessions/{session_id}/share")
+async def share_session(session_id: str, ttl_minutes: int = 60) -> dict:
+    try:
+        await manager.get_session(session_id)  # verify exists
+        return share_manager.create_token(session_id, ttl_seconds=ttl_minutes * 60)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/share/{token}/observe")
+async def shared_observe(token: str) -> dict:
+    """Read-only observe endpoint accessible via share token."""
+    info = share_manager.token_info(token)
+    if not info.get("valid"):
+        raise HTTPException(status_code=403, detail=info.get("error", "Invalid token"))
+    session_id = info["session_id"]
+    try:
+        return await manager.observe(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/sessions/{session_id}/shadow-browse")
+async def enable_shadow_browse(session_id: str) -> dict:
+    """Launch a headed browser session for debugging."""
+    try:
+        return await manager.enable_shadow_browse(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/sessions/{session_id}/export-script")
+async def export_script(session_id: str) -> dict:
+    """Export session actions as a runnable Playwright Python script."""
+    from .playwright_export import export_session_script
+    try:
+        session = await manager.get_session(session_id)
+        return await export_session_script(
+            session_id,
+            manager.audit,
+            start_url=session.page.url,
+            viewport_w=settings.default_viewport_width,
+            viewport_h=settings.default_viewport_height,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/sessions/{session_id}/trace")
+async def get_trace(session_id: str) -> dict:
+    """Return trace file metadata and download URL."""
+    try:
+        from pathlib import Path as _Path
+        session = await manager.get_session(session_id)
+        trace_path = _Path(str(session.trace_path)) if hasattr(session, "trace_path") else None
+        if trace_path and trace_path.exists():
+            return {
+                "session_id": session_id,
+                "trace_path": str(trace_path),
+                "trace_url": f"/artifacts/{session_id}/{trace_path.name}",
+                "trace_size_bytes": trace_path.stat().st_size,
+                "viewer_url": f"https://trace.playwright.dev/?trace=/artifacts/{session_id}/{trace_path.name}",
+            }
+        return {"session_id": session_id, "trace_path": None, "trace_url": None, "viewer_url": None}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/pii-scrubber")
+async def get_pii_scrubber() -> dict:
+    """Return PII scrubber configuration."""
+    return manager.get_pii_scrubber_status()
+
+
+# ── Cron endpoints ─────────────────────────────────────────────────────────
+
+@app.get("/crons")
+async def list_cron_jobs() -> list:
+    return await cron_service.list_jobs()
+
+
+@app.post("/crons")
+async def create_cron_job(payload: dict) -> dict:
+    try:
+        return await cron_service.create_job(**payload)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/crons/{job_id}")
+async def get_cron_job(job_id: str) -> dict:
+    try:
+        return await cron_service.get_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete("/crons/{job_id}")
+async def delete_cron_job(job_id: str) -> dict:
+    deleted = await cron_service.delete_job(job_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Cron job not found: {job_id}")
+    return {"deleted": True, "job_id": job_id}
+
+
+@app.post("/crons/{job_id}/trigger")
+async def trigger_cron_job_via_webhook(job_id: str, request: Request) -> dict:
+    """Webhook endpoint — requires webhook_key in request body."""
+    body = await request.json()
+    webhook_key = body.get("webhook_key", "")
+    try:
+        return await cron_service.trigger_via_webhook(job_id, webhook_key)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc

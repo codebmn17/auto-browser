@@ -232,6 +232,38 @@ class Settings(BaseSettings):
     default_proxy_username: str | None = Field(None, alias="DEFAULT_PROXY_USERNAME")
     default_proxy_password: str | None = Field(None, alias="DEFAULT_PROXY_PASSWORD")
 
+    # Proxy personas — path to JSON file mapping name → {server, username, password}
+    proxy_persona_file: str | None = Field(None, alias="PROXY_PERSONA_FILE")
+
+    # PII scrubbing
+    pii_scrub_enabled: bool = Field(True, alias="PII_SCRUB_ENABLED")
+    pii_scrub_screenshot: bool = Field(True, alias="PII_SCRUB_SCREENSHOT")
+    pii_scrub_network: bool = Field(True, alias="PII_SCRUB_NETWORK")
+    pii_scrub_console: bool = Field(True, alias="PII_SCRUB_CONSOLE")
+    pii_scrub_patterns: str = Field("", alias="PII_SCRUB_PATTERNS")  # "" = all patterns
+    pii_scrub_replacement: str = Field("[REDACTED]", alias="PII_SCRUB_REPLACEMENT")
+    pii_scrub_audit_report: bool = Field(True, alias="PII_SCRUB_AUDIT_REPORT")
+
+    # Network inspector
+    network_inspector_enabled: bool = Field(True, alias="NETWORK_INSPECTOR_ENABLED")
+    network_inspector_max_entries: int = Field(500, alias="NETWORK_INSPECTOR_MAX_ENTRIES")
+    network_inspector_capture_bodies: bool = Field(True, alias="NETWORK_INSPECTOR_CAPTURE_BODIES")
+    network_inspector_body_max_bytes: int = Field(16384, alias="NETWORK_INSPECTOR_BODY_MAX_BYTES")
+
+    # CDP attach mode — connect to an already-running Chrome instance
+    cdp_connect_url: str | None = Field(None, alias="CDP_CONNECT_URL")
+
+    # Shadow browsing — enable headed mode for debugging
+    shadow_browse_enabled: bool = Field(True, alias="SHADOW_BROWSE_ENABLED")
+
+    # Cron / webhook triggers
+    cron_store_path: str = Field("/data/crons/crons.json", alias="CRON_STORE_PATH")
+    cron_max_jobs: int = Field(50, alias="CRON_MAX_JOBS")
+
+    # Shared session links
+    share_token_secret: str | None = Field(None, alias="SHARE_TOKEN_SECRET")
+    share_token_ttl_minutes: int = Field(60, alias="SHARE_TOKEN_TTL_MINUTES")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

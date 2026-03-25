@@ -29,7 +29,9 @@ from .webhooks import dispatch_approval_event
 from .auth_state import AuthStateManager
 from .config import Settings
 from .models import ApprovalKind, BrowserActionDecision, SessionRecord, SessionStatus
+from .network_inspector import NetworkInspector
 from .ocr import OCRExtractor
+from .pii_scrub import PiiScrubber
 from .session_store import DurableSessionStore
 from .session_isolation import DockerBrowserNodeProvisioner, IsolatedBrowserRuntime
 from .social_errors import SocialActionError
@@ -89,6 +91,9 @@ class BrowserSession:
     tunnel_error: str | None = None
     mouse_position: tuple[float, float] | None = None
     totp_secret: str | None = None
+    network_inspector: NetworkInspector | None = None
+    # Headless/headed state — set to False to request headed mode on next fork
+    headless: bool = True
 
 
 class BrowserManager:
@@ -132,6 +137,7 @@ class BrowserManager:
             max_blocks=self.settings.ocr_max_blocks,
             text_limit=self.settings.ocr_text_limit,
         )
+        self.pii_scrubber = PiiScrubber.from_settings(self.settings)
         self.runtime_provisioner = DockerBrowserNodeProvisioner(self.settings)
         self.tunnel_broker = IsolatedSessionTunnelBroker(self.settings)
 
@@ -353,6 +359,15 @@ class BrowserManager:
             if self.playwright is None:
                 raise RuntimeError("Playwright not started")
 
+            # CDP attach mode: connect to an already-running Chrome instance
+            if self.settings.cdp_connect_url:
+                logger.info("connecting to existing Chrome via CDP at %s", self.settings.cdp_connect_url)
+                self.browser = await self.playwright.chromium.connect_over_cdp(
+                    self.settings.cdp_connect_url
+                )
+                logger.info("CDP attach succeeded")
+                return self.browser
+
             self.browser = await self._connect_browser(
                 self._resolve_browser_ws_endpoint,
                 failure_context=(
@@ -362,6 +377,31 @@ class BrowserManager:
                 ),
             )
             return self.browser
+
+    async def cdp_attach(self, cdp_url: str) -> dict[str, Any]:
+        """Attach to an existing Chrome/Chromium instance via CDP URL.
+
+        This replaces the current shared browser connection. Sessions created
+        after calling this will use pages from the attached browser.
+        """
+        if self.playwright is None:
+            raise RuntimeError("Playwright not started")
+        async with self._browser_lock:
+            browser = await self.playwright.chromium.connect_over_cdp(cdp_url)
+            self.browser = browser
+            logger.info("attached to Chrome via CDP at %s", cdp_url)
+            await self.audit.append(
+                event_type="cdp_attach",
+                status="ok",
+                action="cdp_attach",
+                session_id=None,
+                details={"cdp_url": cdp_url},
+            )
+            return {
+                "attached": True,
+                "cdp_url": cdp_url,
+                "browser_version": browser.version,
+            }
 
     async def _connect_browser(self, ws_target_factory, *, failure_context: str) -> Browser:
         if self.playwright is None:
@@ -552,6 +592,19 @@ class BrowserManager:
             self._attach_page_listeners(page, session)
             if hasattr(context, "on"):
                 context.on("page", lambda popup: self._attach_page_listeners(popup, session))
+
+            # Attach network inspector if enabled
+            if self.settings.network_inspector_enabled:
+                inspector = NetworkInspector(
+                    session_id=session_id,
+                    max_entries=self.settings.network_inspector_max_entries,
+                    capture_bodies=self.settings.network_inspector_capture_bodies,
+                    body_max_bytes=self.settings.network_inspector_body_max_bytes,
+                    scrubber=self.pii_scrubber if self.settings.pii_scrub_enabled else None,
+                )
+                inspector.attach(page)
+                session.network_inspector = inspector
+
             self.sessions[session_id] = session
 
             if start_url:
@@ -720,10 +773,166 @@ class BrowserManager:
     async def get_console_messages(self, session_id: str, *, limit: int = 20) -> dict[str, Any]:
         session = await self.get_session(session_id)
         async with session.lock:
+            messages = session.console_messages[-limit:]
+            if self.pii_scrubber.console_enabled:
+                messages, hits = self.pii_scrubber.console(messages)
+                if hits and self.pii_scrubber.audit_report:
+                    await self.audit.append(
+                        event_type="pii_redaction",
+                        status="ok",
+                        action="console_scrub",
+                        session_id=session_id,
+                        details=self.pii_scrubber.build_audit_report(session_id, "console", hits),
+                    )
             return {
                 "session": await self._session_summary(session),
-                "items": session.console_messages[-limit:],
+                "items": messages,
             }
+
+    async def get_network_log(
+        self,
+        session_id: str,
+        *,
+        limit: int = 100,
+        method: str | None = None,
+        url_contains: str | None = None,
+    ) -> dict[str, Any]:
+        session = await self.get_session(session_id)
+        async with session.lock:
+            inspector = session.network_inspector
+            if inspector is None:
+                return {
+                    "session": await self._session_summary(session),
+                    "enabled": False,
+                    "entries": [],
+                    "summary": {},
+                }
+            return {
+                "session": await self._session_summary(session),
+                "enabled": True,
+                "entries": inspector.entries(limit=limit, method=method, url_contains=url_contains),
+                "summary": inspector.summary(),
+            }
+
+    async def fork_session(
+        self,
+        session_id: str,
+        *,
+        name: str | None = None,
+        start_url: str | None = None,
+    ) -> dict[str, Any]:
+        """Fork a session: clone cookies + localStorage state into a new session."""
+        session = await self.get_session(session_id)
+        async with session.lock:
+            # Export cookies and storage state to a temp file
+            fork_auth_path = session.auth_dir / f"fork_{uuid4().hex[:8]}.json"
+            await session.context.storage_state(path=str(fork_auth_path))
+            current_url = session.page.url
+
+        # Create the new session using the forked state
+        forked = await self.create_session(
+            name=name or f"fork-of-{session.name}",
+            start_url=start_url or current_url,
+            storage_state_path=str(fork_auth_path),
+        )
+        forked["forked_from"] = session_id
+        await self.audit.append(
+            event_type="session_forked",
+            status="ok",
+            action="fork_session",
+            session_id=session_id,
+            details={"new_session_id": forked["id"], "start_url": start_url or current_url},
+        )
+        return forked
+
+    def get_pii_scrubber_status(self) -> dict[str, Any]:
+        """Return current PII scrubber configuration."""
+        return self.pii_scrubber.summary()
+
+    async def enable_shadow_browse(self, session_id: str) -> dict[str, Any]:
+        """Switch a session to headed (visible) mode for debugging.
+
+        Because Playwright cannot flip headless→headed mid-session, this:
+        1. Exports state (cookies + storage) from the running session
+        2. Launches a new LOCAL headed Chromium process
+        3. Creates a new BrowserSession with that state and the same URL
+        4. Returns the new session's info (the old session keeps running)
+
+        The caller is expected to close the original session when done debugging.
+        """
+        if not self.settings.shadow_browse_enabled:
+            raise RuntimeError("Shadow browsing is disabled (SHADOW_BROWSE_ENABLED=false)")
+        if self.playwright is None:
+            raise RuntimeError("Playwright not started")
+
+        session = await self.get_session(session_id)
+        async with session.lock:
+            current_url = session.page.url
+            shadow_auth_path = session.auth_dir / f"shadow_{uuid4().hex[:8]}.json"
+            await session.context.storage_state(path=str(shadow_auth_path))
+
+        # Launch a local headed browser process
+        headed_browser = await self.playwright.chromium.launch(
+            headless=False,
+            args=["--no-sandbox", "--disable-setuid-sandbox"],
+        )
+
+        shadow_session_id = uuid4().hex[:12]
+        artifact_dir = Path(self.settings.artifact_root) / shadow_session_id
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        auth_dir = self._session_auth_root(shadow_session_id)
+        upload_dir = self._session_upload_root(shadow_session_id)
+        auth_dir.mkdir(parents=True, exist_ok=True)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        context_kwargs: dict[str, Any] = {
+            "viewport": {
+                "width": self.settings.default_viewport_width,
+                "height": self.settings.default_viewport_height,
+            },
+            "accept_downloads": True,
+            "storage_state": str(shadow_auth_path),
+        }
+        context = await headed_browser.new_context(**context_kwargs)
+        page = await context.new_page()
+        page.set_default_timeout(self.settings.action_timeout_ms)
+        if self.settings.stealth_enabled:
+            await apply_stealth(page)
+
+        shadow_session = BrowserSession(
+            id=shadow_session_id,
+            name=f"shadow-{session.name}",
+            created_at=datetime.now(UTC),
+            context=context,
+            page=page,
+            artifact_dir=artifact_dir,
+            auth_dir=auth_dir,
+            upload_dir=upload_dir,
+            takeover_url=self.settings.takeover_url,
+            trace_path=artifact_dir / "trace.zip",
+            browser=headed_browser,
+            headless=False,
+        )
+        self._attach_page_listeners(page, shadow_session)
+        self.sessions[shadow_session_id] = shadow_session
+
+        await page.goto(current_url, wait_until="domcontentloaded")
+        await self._settle(page)
+        await self._persist_session(shadow_session, status="active")
+        await self.audit.append(
+            event_type="shadow_browse_started",
+            status="ok",
+            action="enable_shadow_browse",
+            session_id=session_id,
+            details={"shadow_session_id": shadow_session_id, "url": current_url},
+        )
+        return {
+            "shadow_session_id": shadow_session_id,
+            "original_session_id": session_id,
+            "url": current_url,
+            "headless": False,
+            "note": "Headed Chrome launched. Close the original session when done debugging.",
+        }
 
     async def get_page_errors(self, session_id: str, *, limit: int = 20) -> dict[str, Any]:
         session = await self.get_session(session_id)
@@ -2809,6 +3018,10 @@ class BrowserManager:
                 await self.tunnel_broker.release(session.tunnel)
             summary = await self._session_summary(session, status="closed", live=False)
             await self._stop_trace_recording(session)
+            # Detach network inspector before closing context
+            if session.network_inspector is not None:
+                session.network_inspector.detach()
+                session.network_inspector = None
             try:
                 await session.context.close()
             finally:
@@ -3105,6 +3318,26 @@ class BrowserManager:
         text_limit = 4000 if preset == "rich" else 2000
         summary = await self._page_summary(session.page, text_limit=text_limit)
         ocr = await self.ocr.extract_from_image(screenshot["path"])
+        # Apply PII pixel-redaction on the already-captured screenshot in-place
+        if self.pii_scrubber.screenshot_enabled and ocr and ocr.get("blocks"):
+            try:
+                scrubbed_path = Path(screenshot["path"])
+                raw_bytes = scrubbed_path.read_bytes()
+                scrubbed_bytes, hits = self.pii_scrubber.screenshot(raw_bytes, ocr["blocks"])
+                if hits:
+                    scrubbed_path.write_bytes(scrubbed_bytes)
+                    if self.pii_scrubber.audit_report:
+                        await self.audit.append(
+                            event_type="pii_redaction",
+                            status="ok",
+                            action="screenshot_scrub",
+                            session_id=session.id,
+                            details=self.pii_scrubber.build_audit_report(
+                                session.id, "screenshot", hits
+                            ),
+                        )
+            except Exception as exc:
+                logger.warning("screenshot PII redaction error for session %s: %s", session.id, exc)
         tabs = await self._tab_summaries(session)
         return {
             "session": await self._session_summary(session),

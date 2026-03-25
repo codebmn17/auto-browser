@@ -113,7 +113,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("social.dm", names)
         self.assertIn("social.login", names)
         self.assertIn("social.search", names)
-        self.assertEqual(len(names), 23)
+        self.assertEqual(len(names), 32)
         self.assertEqual(len(names), len(tools))
 
     async def test_full_profile_keeps_internal_tools_available(self) -> None:
