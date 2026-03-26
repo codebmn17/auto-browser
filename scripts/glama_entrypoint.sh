@@ -7,6 +7,9 @@ if [ -f /opt/venv/bin/activate ]; then
     . /opt/venv/bin/activate
 fi
 
+# The app module lives under controller/ — move there so Python can find it
+cd /app/controller
+
 # Launch uvicorn in the background
 uvicorn app.main:app --host 127.0.0.1 --port 8000 &
 
