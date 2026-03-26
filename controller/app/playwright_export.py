@@ -94,7 +94,7 @@ def _action_to_code(action: str, details: dict[str, Any]) -> str | None:
         lines = ""
         if clear_first:
             lines += f'{loc}.clear()\n'
-        lines += f'{loc}.fill({text!r}){comment}\n' if not comment else f'{loc}.fill({text!r})  {comment}'
+        lines += f'{loc}.fill({text!r}){comment}\n' if not comment else f'{loc}.fill({text!r}){comment}'
         return lines
 
     if action == "press":

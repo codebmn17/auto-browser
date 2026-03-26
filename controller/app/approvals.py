@@ -66,7 +66,8 @@ class FileApprovalStore:
         for path in sorted(self.root.glob("*.json"), reverse=True):
             try:
                 approval = ApprovalRecord.model_validate_json(path.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception as exc:
+                logger.debug("skipping unreadable approval file %s: %s", path.name, exc)
                 continue
             if status is not None and approval.status != status:
                 continue
@@ -179,8 +180,10 @@ class SQLiteApprovalStore:
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
 

@@ -123,7 +123,7 @@ class CronService:
                 "auth_profile": auth_profile,
                 "proxy_persona": proxy_persona,
                 "max_steps": max_steps,
-                "created_at": datetime.now(UTC).isoformat(),
+                "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                 "last_run_at": None,
                 "last_status": None,
                 "run_count": 0,
@@ -263,7 +263,7 @@ class CronService:
         async with self._lock:
             jobs = self._load()
             if job_id in jobs:
-                jobs[job_id]["last_run_at"] = datetime.now(UTC).isoformat()
+                jobs[job_id]["last_run_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
                 jobs[job_id]["last_status"] = "queued"
                 jobs[job_id]["run_count"] = jobs[job_id].get("run_count", 0) + 1
                 self._save(jobs)
@@ -286,7 +286,9 @@ class CronService:
 
     def _save(self, data: dict[str, Any]) -> None:
         self._store_path.parent.mkdir(parents=True, exist_ok=True)
-        self._store_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp = self._store_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp.replace(self._store_path)
 
     @staticmethod
     def _safe_job(job: dict[str, Any]) -> dict[str, Any]:
