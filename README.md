@@ -4,8 +4,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![MCP Server](https://img.shields.io/badge/MCP-server-blue)](./README.md)
 [![Local First](https://img.shields.io/badge/local-first-0ea5e9)](./README.md)
-<a href="https://glama.ai/mcp/servers/LvcidPsyche/auto-browser"><img src="https://glama.ai/mcp/servers/LvcidPsyche/auto-browser/badges/card.svg" width="200" alt="Glama MCP server" /></a>
-
 ![Auto Browser demo](docs/assets/demo.gif)
 
 > **Give your AI agent a real browser — with a human in the loop.**
