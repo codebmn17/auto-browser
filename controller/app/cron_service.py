@@ -31,11 +31,9 @@ If APScheduler is not available, cron scheduling is disabled but webhook trigger
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import hmac
 import json
 import logging
-import os
 import secrets
 from datetime import UTC, datetime
 from pathlib import Path

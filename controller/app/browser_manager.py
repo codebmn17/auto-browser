@@ -7,6 +7,7 @@ import json
 import logging
 import random
 import re
+import tarfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -4029,7 +4030,6 @@ class BrowserManager:
     ) -> dict[str, Any]:
         try:
             from PIL import Image, ImageChops  # type: ignore[import]
-            import io
 
             img_a = Image.open(a_path).convert("RGB")
             img_b = Image.open(b_path).convert("RGB")
@@ -4042,7 +4042,6 @@ class BrowserManager:
             total_pixels = img_a.width * img_a.height
 
             # Count non-black pixels in the diff
-            import struct
             data = diff.tobytes()
             changed = sum(
                 1 for i in range(0, len(data), 3)
@@ -4085,8 +4084,6 @@ class BrowserManager:
 
     async def export_auth_profile(self, profile_name: str) -> dict[str, Any]:
         """Package an auth profile dir as a .tar.gz and return the artifact path."""
-        import tarfile
-
         auth_root = Path(self.settings.auth_root)
         profile_dir = auth_root / profile_name
         if not profile_dir.exists() or not profile_dir.is_dir():
@@ -4106,15 +4103,11 @@ class BrowserManager:
 
     @staticmethod
     def _write_tar(source_dir: Path, dest: Path) -> None:
-        import tarfile
-
         with tarfile.open(str(dest), "w:gz") as tar:
             tar.add(str(source_dir), arcname=source_dir.name)
 
     async def import_auth_profile(self, archive_path: str, *, overwrite: bool = False) -> dict[str, Any]:
         """Extract a .tar.gz archive into the auth root."""
-        import tarfile
-
         src = Path(archive_path)
         if not src.exists():
             raise FileNotFoundError(f"archive not found: {archive_path}")

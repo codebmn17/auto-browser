@@ -15,7 +15,6 @@ Unsupported/skipped: observe, screenshot, approval management.
 
 from __future__ import annotations
 
-import json
 import textwrap
 from datetime import datetime, timezone
 from typing import Any

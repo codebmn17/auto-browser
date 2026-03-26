@@ -1286,7 +1286,6 @@ class McpToolGateway:
             screenshot_path = screenshot["screenshot_path"]
         else:
             # Use the most recent screenshot if available
-            from pathlib import Path
             screenshots = sorted(
                 session.artifact_dir.glob("*.png"),
                 key=lambda p: p.stat().st_mtime,
