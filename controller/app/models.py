@@ -52,6 +52,12 @@ class CreateSessionRequest(StrictInputModel):
     start_url: str | None = Field(default=None, min_length=1, max_length=2000)
     storage_state_path: str | None = Field(default=None, min_length=1, max_length=500)
     auth_profile: str | None = Field(default=None, min_length=1, max_length=120)
+    memory_profile: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120,
+        description="Load a named memory profile into this session.",
+    )
     proxy_persona: str | None = Field(default=None, min_length=1, max_length=200)
     proxy_server: str | None = Field(default=None, min_length=1, max_length=500)
     proxy_username: str | None = Field(default=None, max_length=200)

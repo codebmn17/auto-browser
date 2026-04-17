@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
@@ -117,7 +119,7 @@ class SQLiteApprovalStore:
         await asyncio.to_thread(self._upsert_sync, approval)
 
     def _startup_sync(self) -> None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS approvals (
@@ -149,19 +151,19 @@ class SQLiteApprovalStore:
             query += " AND session_id = ?"
             params.append(session_id)
         query += " ORDER BY created_at DESC, id DESC"
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             rows = conn.execute(query, params).fetchall()
         return [ApprovalRecord.model_validate_json(row[0]) for row in rows]
 
     def _get_sync(self, approval_id: str) -> ApprovalRecord:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             row = conn.execute("SELECT payload FROM approvals WHERE id = ?", (approval_id,)).fetchone()
         if row is None:
             raise KeyError(approval_id)
         return ApprovalRecord.model_validate_json(row[0])
 
     def _upsert_sync(self, approval: ApprovalRecord) -> None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO approvals (
@@ -183,7 +185,8 @@ class SQLiteApprovalStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        if os.name != "nt":
+            conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 

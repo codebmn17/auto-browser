@@ -61,6 +61,8 @@ __all__ = [
     "ProxyPersonaNameInput",
     "QueueAgentRunInput",
     "QueueAgentStepInput",
+    "ReadinessCheckInput",
+    "SaveMemoryProfileInput",
     "SaveAuthProfileInput",
     "SaveAuthStateInput",
     "ScreenshotInput",
@@ -88,6 +90,8 @@ __all__ = [
     "ValidateShareTokenInput",
     "VisionFindInput",
     "WaitForSelectorInput",
+    "GetMemoryProfileInput",
+    "DeleteMemoryProfileInput",
 ]
 
 
@@ -125,6 +129,14 @@ class SaveAuthProfileInput(SessionIdInput):
     profile_name: str = Field(min_length=1, max_length=120)
 
 
+class SaveMemoryProfileInput(SessionIdInput):
+    profile_name: str = Field(min_length=1, max_length=120)
+    goal_summary: str = Field(default="", max_length=5000)
+    completed_steps: list[str] = Field(default_factory=list)
+    discovered_selectors: dict[str, str] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
+
+
 class TakeoverInput(SessionIdInput):
     reason: str = "Manual review requested"
 
@@ -134,6 +146,14 @@ class ListDownloadsInput(SessionIdInput):
 
 
 class AuthProfileNameInput(StrictInputModel):
+    profile_name: str = Field(min_length=1, max_length=120)
+
+
+class GetMemoryProfileInput(StrictInputModel):
+    profile_name: str = Field(min_length=1, max_length=120)
+
+
+class DeleteMemoryProfileInput(StrictInputModel):
     profile_name: str = Field(min_length=1, max_length=120)
 
 
@@ -169,6 +189,10 @@ class ListAgentJobsInput(StrictInputModel):
 
 class GetRemoteAccessInput(StrictInputModel):
     session_id: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class ReadinessCheckInput(StrictInputModel):
+    mode: Literal["normal", "confidential"] = "normal"
 
 
 class AgentJobIdInput(StrictInputModel):

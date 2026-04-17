@@ -201,6 +201,8 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertFalse(any("OPENAI_AUTH_MODE" in error for error in report.errors))
 
     def test_production_accepts_host_bridge_mode_when_socket_exists(self) -> None:
+        if not hasattr(socketserver, "UnixStreamServer"):
+            self.skipTest("Unix domain socket server is not available on this platform")
         with tempfile.TemporaryDirectory() as tempdir:
             socket_path = Path(tempdir) / "codex.sock"
             settings = Settings(

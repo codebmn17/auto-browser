@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
+from contextlib import closing
 from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Protocol
@@ -151,7 +153,7 @@ class SQLiteAuditStore:
         return await asyncio.to_thread(self._list_sync, limit, session_id, event_type, operator_id)
 
     def _startup_sync(self) -> None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS audit_events (
@@ -183,7 +185,7 @@ class SQLiteAuditStore:
             conn.commit()
 
     def _append_sync(self, event: AuditEvent) -> None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO audit_events (
@@ -237,14 +239,15 @@ class SQLiteAuditStore:
             params.append(operator_id)
         query += " ORDER BY timestamp DESC, id DESC LIMIT ?"
         params.append(str(limit))
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             rows = conn.execute(query, params).fetchall()
         return [AuditEvent.model_validate_json(row[0]) for row in rows]
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        if os.name != "nt":
+            conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 

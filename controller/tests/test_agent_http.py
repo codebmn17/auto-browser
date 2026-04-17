@@ -88,6 +88,21 @@ class AgentHttpTests(unittest.TestCase):
         )
         list_providers.assert_called_once_with()
 
+    def test_readiness_endpoint_returns_503_for_failed_configuration(self) -> None:
+        with (
+            patch.object(main_module.settings, "require_auth_state_encryption", True),
+            patch.object(main_module.settings, "auth_state_encryption_key", None),
+        ):
+            response = self.client.get("/readiness")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["overall"], "fail")
+
+    def test_readiness_endpoint_rejects_invalid_mode(self) -> None:
+        response = self.client.get("/readiness?mode=invalid")
+
+        self.assertEqual(response.status_code, 400)
+
     def test_agent_step_returns_success_payload_with_mock_provider(self) -> None:
         step = AsyncMock(
             return_value=AgentStepResult(

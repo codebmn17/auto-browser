@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_env: str = Field("development", validation_alias=AliasChoices("APP_ENV", "ENVIRONMENT"))
     api_bearer_token: str | None = Field(None, alias="API_BEARER_TOKEN")
+    log_level: str = Field("INFO", alias="LOG_LEVEL")
     browser_ws_endpoint: str | None = Field(
         None,
         validation_alias=AliasChoices("BROWSER_WS_ENDPOINT", "BROWSER_CDP_ENDPOINT"),
@@ -39,6 +40,11 @@ class Settings(BaseSettings):
     audit_max_events: int = Field(10000, alias="AUDIT_MAX_EVENTS")
     session_store_root: str = Field("/data/sessions", alias="SESSION_STORE_ROOT")
     job_store_root: str = Field("/data/jobs", alias="JOB_STORE_ROOT")
+    compliance_template: str | None = Field(None, alias="COMPLIANCE_TEMPLATE")
+    compliance_manifest_path: str = Field(
+        "/data/compliance-manifest.json",
+        alias="COMPLIANCE_MANIFEST_PATH",
+    )
     redis_url: str | None = Field(None, alias="REDIS_URL")
     session_store_redis_prefix: str = Field(
         "auto_browser:sessions",
@@ -48,6 +54,8 @@ class Settings(BaseSettings):
     auth_state_encryption_key: str | None = Field(None, alias="AUTH_STATE_ENCRYPTION_KEY")
     require_auth_state_encryption: bool = Field(False, alias="REQUIRE_AUTH_STATE_ENCRYPTION")
     auth_state_max_age_hours: float = Field(72.0, alias="AUTH_STATE_MAX_AGE_HOURS")
+    memory_root: str = Field("/data/memory", alias="MEMORY_ROOT")
+    memory_enabled: bool = Field(True, alias="MEMORY_ENABLED")
     ocr_enabled: bool = Field(True, alias="OCR_ENABLED")
     ocr_language: str = Field("eng", alias="OCR_LANGUAGE")
     ocr_max_blocks: int = Field(20, alias="OCR_MAX_BLOCKS")
@@ -143,7 +151,7 @@ class Settings(BaseSettings):
     )
     isolated_tunnel_local_host: str = Field("host.docker.internal", alias="ISOLATED_TUNNEL_LOCAL_HOST")
     isolated_tunnel_info_root: str = Field("/data/tunnels/sessions", alias="ISOLATED_TUNNEL_INFO_ROOT")
-    allowed_hosts: str = Field("example.com,localhost", alias="ALLOWED_HOSTS")
+    allowed_hosts: str = Field("*", alias="ALLOWED_HOSTS")
     default_viewport_width: int = Field(1280, alias="DEFAULT_VIEWPORT_WIDTH")
     default_viewport_height: int = Field(800, alias="DEFAULT_VIEWPORT_HEIGHT")
     connect_retries: int = Field(60, alias="CONNECT_RETRIES")
@@ -197,6 +205,7 @@ class Settings(BaseSettings):
     anthropic_base_url: str = Field("https://api.anthropic.com/v1", alias="ANTHROPIC_BASE_URL")
     anthropic_version: str = Field("2023-06-01", alias="ANTHROPIC_VERSION")
     claude_model: str = Field("claude-sonnet-4-20250514", alias="CLAUDE_MODEL")
+    vision_model: str = Field("claude-haiku-4-5-20251001", alias="VISION_MODEL")
     claude_auth_mode: str = Field("api", alias="CLAUDE_AUTH_MODE")
     claude_cli_path: str = Field("claude", alias="CLAUDE_CLI_PATH")
     claude_cli_model: str | None = Field(None, alias="CLAUDE_CLI_MODEL")

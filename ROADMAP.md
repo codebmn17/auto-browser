@@ -27,11 +27,20 @@ This is the near-term direction for Auto Browser.
 
 - better session recovery and resume flows (crash-tolerant agents)
 - cleaner multi-tab / popup management
-- easier auth profile setup wizard
-- improved docs and example workflows
-- hosted demo environments for contributors
-- resource subscription push (MCP `resources/subscribe` + `notifications/resources/updated`)
+- MCP `resources/subscribe` push notifications (live browser state streaming)
 - stronger trace viewer integration in operator dashboard
+- platform-versioned social scraping connector library
+- auth profile setup wizard
+
+## Recently Shipped
+
+- Agent memory profiles for cross-session context persistence
+- Deployment readiness advisor with compliance mode checks
+- Compliance templates (HIPAA, SOC2, GDPR, PCI-DSS) via a single env var
+- GitHub Codespaces one-click demo environment
+- LangChain / LangGraph / CrewAI integration package
+- Timing-safe bearer token comparison
+- Haiku as the default vision targeting model
 
 ## Later
 

@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from .models import McpToolCallRequest
+from .utils import utc_now
 
 JSONRPC_VERSION = "2.0"
 MCP_SESSION_HEADER = "MCP-Session-Id"
@@ -35,6 +36,11 @@ class McpSession:
     client_info: dict[str, Any]
     client_capabilities: dict[str, Any]
     initialized: bool = False
+    created_at: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.created_at:
+            self.created_at = utc_now()
 
 
 class McpHttpTransport:
@@ -467,15 +473,31 @@ class McpHttpTransport:
                     client_info=self._coerce_dict(item.get("client_info")),
                     client_capabilities=self._coerce_dict(item.get("client_capabilities")),
                     initialized=bool(item.get("initialized", False)),
+                    created_at=str(item.get("created_at") or ""),
                 )
             except Exception:
                 continue
             restored[session.id] = session
         self._sessions = restored
 
+    def _evict_stale_sessions(self) -> None:
+        if len(self._sessions) <= 500:
+            return
+        excess = len(self._sessions) - 500
+        stale_keys = [
+            session.id
+            for session in sorted(
+                self._sessions.values(),
+                key=lambda item: (item.created_at or "", item.id),
+            )[:excess]
+        ]
+        for key in stale_keys:
+            del self._sessions[key]
+
     def _persist_sessions(self) -> None:
         if self._session_store_path is None:
             return
+        self._evict_stale_sessions()
         self._session_store_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._session_store_path.with_suffix(".json.tmp")
         payload = [asdict(session) for session in self._sessions.values()]

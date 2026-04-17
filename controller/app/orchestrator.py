@@ -34,12 +34,15 @@ class BrowserOrchestrator:
     ) -> AgentStepResult:
         adapter = self.registry.get(provider_name)
         model_name = provider_model or adapter.default_model
+        session = await self.manager.get_session(session_id)
+        memory_context = getattr(session, "metadata", {}).get("memory_context")
+        effective_goal = f"{memory_context}\n\n---\nCurrent goal: {goal}" if memory_context else goal
         observation = await self.manager.observe(session_id, limit=observation_limit)
         prompt_history = self._summarize_previous_steps(previous_steps or [])
 
         try:
             provider_decision = await adapter.decide(
-                goal=goal,
+                goal=effective_goal,
                 observation=observation,
                 context_hints=context_hints,
                 previous_steps=prompt_history,

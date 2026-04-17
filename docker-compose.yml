@@ -32,10 +32,13 @@ services:
         condition: service_healthy
     environment:
       API_BEARER_TOKEN: ${API_BEARER_TOKEN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       BROWSER_WS_ENDPOINT_FILE: /data/browser-profile/browser-ws-endpoint.txt
       TAKEOVER_URL: ${TAKEOVER_URL:-http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale}
       REMOTE_ACCESS_INFO_PATH: ${REMOTE_ACCESS_INFO_PATH:-/data/tunnels/reverse-ssh.json}
       REMOTE_ACCESS_STALE_AFTER_SECONDS: ${REMOTE_ACCESS_STALE_AFTER_SECONDS:-45}
+      COMPLIANCE_TEMPLATE: ${COMPLIANCE_TEMPLATE:-}
+      COMPLIANCE_MANIFEST_PATH: ${COMPLIANCE_MANIFEST_PATH:-/data/compliance-manifest.json}
       ARTIFACT_ROOT: /data/artifacts
       UPLOAD_ROOT: /data/uploads
       AUTH_ROOT: /data/auth
@@ -52,6 +55,8 @@ services:
       REQUIRE_AUTH_STATE_ENCRYPTION: ${REQUIRE_AUTH_STATE_ENCRYPTION:-false}
       AUTH_STATE_MAX_AGE_HOURS: ${AUTH_STATE_MAX_AGE_HOURS:-72}
       OCR_ENABLED: ${OCR_ENABLED:-true}
+      MEMORY_ROOT: /data/memory
+      MEMORY_ENABLED: ${MEMORY_ENABLED:-true}
       OCR_LANGUAGE: ${OCR_LANGUAGE:-eng}
       OCR_MAX_BLOCKS: ${OCR_MAX_BLOCKS:-20}
       OCR_TEXT_LIMIT: ${OCR_TEXT_LIMIT:-1200}
@@ -61,7 +66,7 @@ services:
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
       MCP_TOOL_PROFILE: ${MCP_TOOL_PROFILE:-curated}
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
-      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-example.com}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-*}
       DEFAULT_VIEWPORT_WIDTH: ${BROWSER_WIDTH:-1280}
       DEFAULT_VIEWPORT_HEIGHT: ${BROWSER_HEIGHT:-800}
       MAX_SESSIONS: ${MAX_SESSIONS:-1}

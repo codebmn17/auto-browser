@@ -14,6 +14,7 @@ from .models import (
     McpToolCallResponse,
     McpToolDescriptor,
 )
+from .readiness import run_readiness_checks
 from .social_errors import SocialActionError
 from .tool_inputs import (  # noqa: F401 — re-exported for backwards compat
     AgentJobIdInput,
@@ -27,6 +28,7 @@ from .tool_inputs import (  # noqa: F401 — re-exported for backwards compat
     CreateProxyPersonaInput,
     CreateSessionRequest,
     CronJobIdInput,
+    DeleteMemoryProfileInput,
     DragDropInput,
     EmptyInput,
     EvalJsInput,
@@ -36,6 +38,7 @@ from .tool_inputs import (  # noqa: F401 — re-exported for backwards compat
     ForkCdpInput,
     ForkSessionInput,
     GetCookiesInput,
+    GetMemoryProfileInput,
     GetNetworkLogInput,
     GetPageHtmlInput,
     GetRemoteAccessInput,
@@ -49,8 +52,10 @@ from .tool_inputs import (  # noqa: F401 — re-exported for backwards compat
     ProxyPersonaNameInput,
     QueueAgentRunInput,
     QueueAgentStepInput,
+    ReadinessCheckInput,
     SaveAuthProfileInput,
     SaveAuthStateInput,
+    SaveMemoryProfileInput,
     ScreenshotInput,
     SessionIdInput,
     SessionTailInput,
@@ -117,6 +122,34 @@ class McpToolGateway:
                     description="Create a new browser session and optionally navigate to a start URL.",
                     input_model=CreateSessionRequest,
                     handler=self._create_session,
+                ),
+                ToolSpec(
+                    name="browser.save_memory_profile",
+                    description=(
+                        "Save a named memory profile with context from the current session. "
+                        "Loaded into future sessions via memory_profile=name in create_session."
+                    ),
+                    input_model=SaveMemoryProfileInput,
+                    handler=self._save_memory_profile,
+                ),
+                ToolSpec(
+                    name="browser.get_memory_profile",
+                    description="Retrieve a saved memory profile by name.",
+                    input_model=GetMemoryProfileInput,
+                    handler=self._get_memory_profile,
+                ),
+                ToolSpec(
+                    name="browser.list_memory_profiles",
+                    description="List all saved memory profiles.",
+                    input_model=EmptyInput,
+                    handler=self._list_memory_profiles,
+                ),
+                ToolSpec(
+                    name="browser.delete_memory_profile",
+                    description="Delete a named memory profile.",
+                    input_model=DeleteMemoryProfileInput,
+                    handler=self._delete_memory_profile,
+                    profiles=("full",),
                 ),
                 ToolSpec(
                     name="browser.list_sessions",
@@ -302,6 +335,17 @@ class McpToolGateway:
                     input_model=GetRemoteAccessInput,
                     handler=self._get_remote_access,
                     profiles=("full",),
+                ),
+                ToolSpec(
+                    name="browser.readiness_check",
+                    description=(
+                        "Run a deployment readiness check. Returns pass/warn/fail for encryption, "
+                        "operator identity, bearer token, session isolation, Witness audit, "
+                        "host allowlist, PII scrubbing, and upload approval. "
+                        "Pass mode='confidential' for stricter checks."
+                    ),
+                    input_model=ReadinessCheckInput,
+                    handler=self._readiness_check,
                 ),
                 ToolSpec(
                     name="social.scroll_feed",
@@ -671,6 +715,8 @@ class McpToolGateway:
             ]
             if self.tool_profile in spec.profiles
         }
+        if vision_targeter is None and "browser.find_by_vision" in self._tools:
+            del self._tools["browser.find_by_vision"]
 
     def list_tools(self) -> list[dict[str, Any]]:
         return [
@@ -733,6 +779,7 @@ class McpToolGateway:
             start_url=payload.start_url,
             storage_state_path=payload.storage_state_path,
             auth_profile=payload.auth_profile,
+            memory_profile=payload.memory_profile,
             proxy_persona=payload.proxy_persona,
             request_proxy_server=payload.proxy_server,
             request_proxy_username=payload.proxy_username,
@@ -744,6 +791,39 @@ class McpToolGateway:
 
     async def _list_sessions(self, _: EmptyInput) -> list[dict[str, Any]]:
         return await self.manager.list_sessions()
+
+    async def _save_memory_profile(self, payload: SaveMemoryProfileInput) -> dict[str, Any]:
+        if self.manager.memory is None:
+            raise RuntimeError("Memory profiles are not enabled.")
+        await self.manager.get_session(payload.session_id)
+        profile = await self.manager.memory.save(
+            payload.profile_name,
+            goal_summary=payload.goal_summary,
+            completed_steps=payload.completed_steps,
+            discovered_selectors=payload.discovered_selectors,
+            notes=payload.notes,
+            metadata={"session_id": payload.session_id},
+        )
+        return profile.model_dump()
+
+    async def _get_memory_profile(self, payload: GetMemoryProfileInput) -> dict[str, Any]:
+        if self.manager.memory is None:
+            raise RuntimeError("Memory profiles are not enabled.")
+        profile = await self.manager.memory.get(payload.profile_name)
+        if profile is None:
+            raise KeyError(f"Memory profile not found: {payload.profile_name!r}")
+        return profile.model_dump()
+
+    async def _list_memory_profiles(self, _: EmptyInput) -> list[dict[str, Any]]:
+        if self.manager.memory is None:
+            return []
+        return await self.manager.memory.list()
+
+    async def _delete_memory_profile(self, payload: DeleteMemoryProfileInput) -> dict[str, Any]:
+        if self.manager.memory is None:
+            raise RuntimeError("Memory profiles are not enabled.")
+        deleted = await self.manager.memory.delete(payload.profile_name)
+        return {"name": payload.profile_name, "deleted": deleted}
 
     async def _get_session(self, payload: SessionIdInput) -> dict[str, Any]:
         return await self.manager.get_session_record(payload.session_id)
@@ -837,6 +917,10 @@ class McpToolGateway:
             record = await self.manager.get_session_record(payload.session_id)
             return record["remote_access"]
         return self.manager.get_remote_access_info(payload.session_id)
+
+    async def _readiness_check(self, payload: ReadinessCheckInput) -> dict[str, Any]:
+        report = run_readiness_checks(self.manager.settings, mode=payload.mode)
+        return report.to_dict()
 
     async def _social_scroll(self, payload: SocialScrollInput) -> dict[str, Any]:
         return await self.manager.scroll_feed(
@@ -1021,6 +1105,8 @@ class McpToolGateway:
         return {"session_id": payload.session_id, "set": len(payload.cookies)}
 
     async def _get_local_storage(self, payload: GetStorageInput) -> dict[str, Any]:
+        if payload.storage_type not in {"local", "session"}:
+            raise ValueError(f"Invalid storage_type: {payload.storage_type!r}")
         session = await self.manager.get_session(payload.session_id)
         if payload.key:
             script = f"() => window.{payload.storage_type}Storage.getItem({payload.key!r})"
@@ -1035,6 +1121,8 @@ class McpToolGateway:
         return {"session_id": payload.session_id, "storage": data}
 
     async def _set_local_storage(self, payload: SetStorageInput) -> dict[str, Any]:
+        if payload.storage_type not in {"local", "session"}:
+            raise ValueError(f"Invalid storage_type: {payload.storage_type!r}")
         session = await self.manager.get_session(payload.session_id)
         script = f"([k, v]) => window.{payload.storage_type}Storage.setItem(k, v)"
         await session.page.evaluate(script, [payload.key, payload.value])

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from app.mcp_transport import MCP_PROTOCOL_HEADER, MCP_SESSION_HEADER, McpHttpTransport
+from app.mcp_transport import MCP_PROTOCOL_HEADER, MCP_SESSION_HEADER, McpHttpTransport, McpSession
 from app.models import McpToolCallContent, McpToolCallResponse
 
 
@@ -200,6 +202,41 @@ class McpTransportTests(unittest.TestCase):
 
         self.assertEqual(list_response.status_code, 200)
         self.assertEqual(list_response.json()["result"]["tools"][0]["name"], "browser.observe")
+        store_payload = json.loads(Path(f"{self.tempdir.name}/mcp-sessions.json").read_text(encoding="utf-8"))
+        self.assertTrue(store_payload[0]["created_at"])
+        self.assertEqual(restarted._sessions[session_id].created_at, store_payload[0]["created_at"])
+
+    def test_persist_sessions_evicts_oldest_entries_after_limit(self) -> None:
+        transport = McpHttpTransport(
+            tool_gateway=self.gateway,
+            server_name="auto-browser",
+            server_title="Auto Browser MCP",
+            server_version="0.2.0",
+            allowed_origins=["https://allowed.example"],
+            session_store_path=f"{self.tempdir.name}/mcp-sessions.json",
+            manager=self.manager,
+        )
+        transport._sessions = {
+            f"session-{index}": McpSession(
+                id=f"session-{index}",
+                protocol_version="2025-11-25",
+                client_info={},
+                client_capabilities={},
+                initialized=bool(index % 2),
+                created_at=f"2026-04-17T00:00:{index:02d}Z",
+            )
+            for index in range(503)
+        }
+
+        transport._persist_sessions()
+
+        store_payload = json.loads(Path(f"{self.tempdir.name}/mcp-sessions.json").read_text(encoding="utf-8"))
+        ids = [item["id"] for item in store_payload]
+        self.assertEqual(len(store_payload), 500)
+        self.assertNotIn("session-0", ids)
+        self.assertNotIn("session-1", ids)
+        self.assertNotIn("session-2", ids)
+        self.assertIn("session-3", ids)
 
     def test_missing_method_returns_invalid_request_error(self) -> None:
         response = self.client.post(

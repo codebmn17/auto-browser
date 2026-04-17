@@ -167,7 +167,7 @@ class SessionStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resolved, session_file.resolve())
 
         payload = await self.manager.save_storage_state(session.id, "state.json")
-        self.assertIn("/session-scope/state.json", payload["saved_to"])
+        self.assertIn("/session-scope/state.json", Path(payload["saved_to"]).as_posix())
 
     async def test_save_auth_profile_persists_reusable_profile(self) -> None:
         artifact_dir = Path(self.settings.artifact_root) / "session-profile"
@@ -193,7 +193,7 @@ class SessionStoreTests(unittest.IsolatedAsyncioTestCase):
         payload = await self.manager.save_auth_profile(session.id, "outlook-default")
 
         self.assertEqual(payload["profile_name"], "outlook-default")
-        self.assertIn("/profiles/outlook-default/state.json", payload["saved_to"])
+        self.assertIn("/profiles/outlook-default/state.json", Path(payload["saved_to"]).as_posix())
         profile = await self.manager.get_auth_profile("outlook-default")
         self.assertEqual(profile["profile_name"], "outlook-default")
         self.assertEqual(profile["metadata"]["saved_from_session_id"], session.id)

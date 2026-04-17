@@ -88,9 +88,7 @@ _RAW_PATTERNS: list[tuple[str, str]] = [
     # US phone numbers: many formats
     (
         "phone_us",
-        r"(?:\+?1[-.\s]?)?"
-        r"(?:\(?\d{3}\)?[-.\s]?)"
-        r"\d{3}[-.\s]?\d{4}\b",
+        r"(?<!\d)(?:\+?1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]\d{3}[-.\s]\d{4}(?!\d)",
     ),
     # International phone numbers starting with +
     ("phone_intl", r"\+(?:[0-9] ?){6,14}[0-9]\b"),
@@ -119,6 +117,7 @@ _COMPILED: dict[str, re.Pattern[str]] = {
 
 # Pattern display order (for reports)
 ALL_PATTERN_NAMES = [name for name, _ in _RAW_PATTERNS]
+_NOISY_PATTERNS = {"generic_hex_token"}
 
 
 # ── Luhn check for credit card validation ─────────────────────────────────
@@ -362,6 +361,8 @@ class PiiScrubber:
             patterns = {p.strip() for p in raw_patterns.split(",") if p.strip()}
             # validate — silently drop unknown names
             patterns = patterns & set(ALL_PATTERN_NAMES)
+        else:
+            patterns = set(ALL_PATTERN_NAMES) - _NOISY_PATTERNS
 
         return cls(
             enabled=enabled,

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 from app.action_errors import BrowserActionError
 from app.approvals import ApprovalRequiredError
+from app.memory_manager import MemoryProfile
 from app.models import ApprovalRecord, BrowserActionDecision, McpToolCallRequest, ProviderInfo
 from app.social_errors import SocialActionError
 from app.tool_gateway import McpToolGateway
@@ -62,6 +63,38 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             execute_approval=AsyncMock(return_value={"approval": {"id": "approval-1", "status": "executed"}}),
             get_remote_access_info=lambda: {"active": False, "status": "inactive"},
             get_session=AsyncMock(return_value={"id": "session-1"}),
+            settings=SimpleNamespace(
+                auth_state_encryption_key=None,
+                require_auth_state_encryption=False,
+                require_operator_id=False,
+                api_bearer_token=None,
+                session_isolation_mode="shared_browser_node",
+                witness_enabled=True,
+                witness_remote_url=None,
+                allowed_hosts="*",
+                pii_scrub_enabled=True,
+                require_approval_for_uploads=True,
+            ),
+            memory=SimpleNamespace(
+                save=AsyncMock(
+                    return_value=MemoryProfile(
+                        name="checkout",
+                        created_at="2026-01-01T00:00:00Z",
+                        updated_at="2026-01-01T00:00:00Z",
+                        goal_summary="Buy the thing",
+                    )
+                ),
+                get=AsyncMock(
+                    return_value=MemoryProfile(
+                        name="checkout",
+                        created_at="2026-01-01T00:00:00Z",
+                        updated_at="2026-01-01T00:00:00Z",
+                        goal_summary="Buy the thing",
+                    )
+                ),
+                list=AsyncMock(return_value=[{"name": "checkout", "step_count": 0}]),
+                delete=AsyncMock(return_value=True),
+            ),
         )
         self.orchestrator = SimpleNamespace(
             list_providers=lambda: [ProviderInfo(provider="openai", configured=True, model="gpt-4.1-mini")]
@@ -83,6 +116,12 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             job_queue=self.job_queue,
             tool_profile="full",
         )
+        self.vision_gateway = McpToolGateway(
+            manager=self.manager,
+            orchestrator=self.orchestrator,
+            job_queue=self.job_queue,
+            vision_targeter=object(),
+        )
 
     async def test_list_tools_includes_expected_browser_tools(self) -> None:
         tools = self.gateway.list_tools()
@@ -94,6 +133,10 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("browser.get_page_errors", names)
         self.assertIn("browser.get_request_failures", names)
         self.assertIn("browser.stop_trace", names)
+        self.assertIn("browser.save_memory_profile", names)
+        self.assertIn("browser.get_memory_profile", names)
+        self.assertIn("browser.list_memory_profiles", names)
+        self.assertIn("browser.readiness_check", names)
         self.assertIn("browser.list_auth_profiles", names)
         self.assertIn("browser.get_auth_profile", names)
         self.assertIn("browser.list_tabs", names)
@@ -113,7 +156,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("social.dm", names)
         self.assertIn("social.login", names)
         self.assertIn("social.search", names)
-        self.assertEqual(len(names), 32)
+        self.assertNotIn("browser.find_by_vision", names)
         self.assertEqual(len(names), len(tools))
 
     async def test_full_profile_keeps_internal_tools_available(self) -> None:
@@ -121,9 +164,60 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("browser.list_agent_jobs", names)
         self.assertIn("browser.list_providers", names)
+        self.assertIn("browser.delete_memory_profile", names)
+        self.assertIn("browser.readiness_check", names)
         self.assertIn("browser.list_approvals", names)
         self.assertIn("social.post", names)
         self.assertIn("social.dm", names)
+        self.assertNotIn("browser.find_by_vision", names)
+
+    async def test_vision_tool_is_listed_when_targeter_is_available(self) -> None:
+        names = {tool["name"] for tool in self.vision_gateway.list_tools()}
+
+        self.assertIn("browser.find_by_vision", names)
+
+    async def test_readiness_tool_returns_report(self) -> None:
+        response = await self.gateway.call_tool(
+            McpToolCallRequest(name="browser.readiness_check", arguments={"mode": "confidential"})
+        )
+
+        self.assertFalse(response.isError)
+        self.assertEqual(response.structuredContent["mode"], "confidential")
+        self.assertIn(response.structuredContent["overall"], {"warn", "fail"})
+
+    async def test_memory_profile_tools_forward_arguments(self) -> None:
+        save_response = await self.gateway.call_tool(
+            McpToolCallRequest(
+                name="browser.save_memory_profile",
+                arguments={
+                    "session_id": "session-1",
+                    "profile_name": "checkout",
+                    "goal_summary": "Buy the thing",
+                    "completed_steps": ["opened cart"],
+                    "discovered_selectors": {"buy": "#buy"},
+                    "notes": ["requires login"],
+                },
+            )
+        )
+        get_response = await self.gateway.call_tool(
+            McpToolCallRequest(name="browser.get_memory_profile", arguments={"profile_name": "checkout"})
+        )
+        list_response = await self.gateway.call_tool(
+            McpToolCallRequest(name="browser.list_memory_profiles", arguments={})
+        )
+        delete_response = await self.full_gateway.call_tool(
+            McpToolCallRequest(name="browser.delete_memory_profile", arguments={"profile_name": "checkout"})
+        )
+
+        self.assertFalse(save_response.isError)
+        self.assertFalse(get_response.isError)
+        self.assertFalse(list_response.isError)
+        self.assertFalse(delete_response.isError)
+        self.manager.get_session.assert_awaited_once_with("session-1")
+        self.manager.memory.save.assert_awaited_once()
+        self.manager.memory.get.assert_awaited_once_with("checkout")
+        self.manager.memory.list.assert_awaited_once_with()
+        self.manager.memory.delete.assert_awaited_once_with("checkout")
 
     async def test_execute_action_tool_returns_structured_payload(self) -> None:
         response = await self.gateway.call_tool(
@@ -239,6 +333,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             start_url="https://example.com",
             storage_state_path=None,
             auth_profile="outlook-default",
+            memory_profile=None,
             proxy_persona=None,
             request_proxy_server="http://proxy.internal:8080",
             request_proxy_username="alice",
@@ -266,6 +361,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             start_url="https://example.com",
             storage_state_path=None,
             auth_profile=None,
+            memory_profile=None,
             proxy_persona="us-east",
             request_proxy_server=None,
             request_proxy_username=None,
@@ -274,6 +370,17 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             protection_mode=None,
             totp_secret=None,
         )
+
+    async def test_create_session_forwards_memory_profile(self) -> None:
+        response = await self.gateway.call_tool(
+            McpToolCallRequest(
+                name="browser.create_session",
+                arguments={"memory_profile": "checkout"},
+            )
+        )
+
+        self.assertFalse(response.isError)
+        self.assertEqual(self.manager.create_session.await_args.kwargs["memory_profile"], "checkout")
 
     async def test_observe_tool_forwards_preset(self) -> None:
         response = await self.gateway.call_tool(

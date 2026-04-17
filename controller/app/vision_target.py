@@ -10,7 +10,7 @@ Returns: {"x": float, "y": float, "confidence": float, "description": str}
 Usage:
     from .vision_target import VisionTargeter
     targeter = VisionTargeter(api_key=settings.anthropic_api_key,
-                              model=settings.claude_model)
+                              model=settings.vision_model)
     result = await targeter.find_element(screenshot_path, "the blue Submit button")
 """
 
@@ -26,7 +26,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "claude-opus-4-20250514"
+_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 _SYSTEM_PROMPT = """\
 You are a precise UI element locator. You will be shown a screenshot of a web page
@@ -175,5 +175,5 @@ class VisionTargeter:
         return cls(
             api_key=api_key,
             base_url=getattr(settings, "anthropic_base_url", "https://api.anthropic.com"),
-            model=getattr(settings, "claude_model", _DEFAULT_MODEL),
+            model=getattr(settings, "vision_model", None) or _DEFAULT_MODEL,
         )

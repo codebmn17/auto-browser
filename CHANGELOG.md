@@ -4,6 +4,29 @@ All notable changes to auto-browser are documented here.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-04-17
+
+### Added
+- Deployment readiness advisor (`GET /readiness`, `browser.readiness_check` MCP tool)
+- Compliance templates: HIPAA, SOC2, GDPR, PCI-DSS via `COMPLIANCE_TEMPLATE` env var
+- Compliance manifest written to `/data/compliance-manifest.json` on startup
+- GitHub Codespaces devcontainer for one-click live demos without local Docker
+- Agent memory profiles (`browser.save_memory_profile`, `browser.get_memory_profile`, `browser.list_memory_profiles`, `browser.delete_memory_profile`)
+- Memory profile context injected into the orchestrator prompt prefix
+- LangChain / LangGraph / CrewAI integration package under `integrations/langchain/`
+- `LOG_LEVEL` environment variable for runtime log level control
+- `browser.find_by_vision` is now absent from the tool list when `ANTHROPIC_API_KEY` is not configured
+
+### Fixed
+- Bearer token comparison now uses constant-time `hmac.compare_digest`
+- `storage_type` is validated to `{"local", "session"}` to harden storage access
+- `generic_hex_token` PII matching is now opt-in by default to reduce false positives
+- `phone_us` PII matching no longer trips on version-string-like inputs
+- Vision targeting now defaults to `VISION_MODEL=claude-haiku-4-5-20251001`
+- `ALLOWED_HOSTS` now defaults to `"*"` for frictionless local development
+- MCP session persistence now evicts excess sessions to avoid unbounded growth
+- SQLite-backed approval and audit stores now close connections correctly during host-side test runs
+
 ## [0.5.4] — 2026-04-16
 
 ### Fixed

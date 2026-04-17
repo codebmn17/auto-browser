@@ -343,6 +343,8 @@ class ProviderCLITests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("api, cli, host_bridge", adapter.readiness_detail)
 
     def test_host_bridge_mode_checks_socket_path(self) -> None:
+        if not hasattr(socketserver, "UnixStreamServer"):
+            self.skipTest("Unix domain socket server is not available on this platform")
         socket_path = Path(self.tempdir.name) / "codex.sock"
         adapter = OpenAIAdapter(
             Settings(

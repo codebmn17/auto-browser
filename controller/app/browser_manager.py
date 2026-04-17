@@ -46,6 +46,7 @@ from .browser_scripts import (
     apply_stealth,
 )
 from .config import Settings
+from .memory_manager import MemoryManager
 from .models import (
     ApprovalKind,
     BrowserActionDecision,
@@ -118,6 +119,7 @@ class BrowserSession:
     protection_mode: str = "normal"
     pending_witness_context: dict[str, Any] | None = None
     witness_remote_state: WitnessRemoteState = field(default_factory=WitnessRemoteState)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class BrowserManager:
@@ -158,6 +160,7 @@ class BrowserManager:
             redis_url=self.settings.redis_url,
             redis_prefix=self.settings.session_store_redis_prefix,
         )
+        self.memory = MemoryManager(settings.memory_root) if settings.memory_enabled else None
         self.auth_state = AuthStateManager(
             encryption_key=self.settings.auth_state_encryption_key,
             require_encryption=self.settings.require_auth_state_encryption,
@@ -375,6 +378,8 @@ class BrowserManager:
             await self.witness_remote.startup()
         await self.session_store.startup()
         await self.session_store.mark_all_active_interrupted()
+        if self.memory is not None:
+            await self.memory.startup()
         self.playwright = await async_playwright().start()
         await self.tunnel_broker.startup()
         await self.runtime_provisioner.startup()
@@ -517,6 +522,7 @@ class BrowserManager:
         start_url: str | None = None,
         storage_state_path: str | None = None,
         auth_profile: str | None = None,
+        memory_profile: str | None = None,
         proxy_persona: str | None = None,
         request_proxy_server: str | None = None,
         request_proxy_username: str | None = None,
@@ -629,6 +635,12 @@ class BrowserManager:
                 await self._settle(page)
 
             await self._maybe_provision_session_tunnel(session)
+            if memory_profile and self.memory is not None:
+                memory = await self.memory.get(memory_profile)
+                if memory is not None:
+                    session.metadata["memory_context"] = memory.to_system_prompt()
+                    session.metadata["memory_profile"] = memory_profile
+                    logger.info("memory profile loaded: %s", memory_profile)
             await self._persist_session(session, status="active")
             await self._record_session_witness_receipt(
                 session,
@@ -638,6 +650,7 @@ class BrowserManager:
                     "start_url": start_url,
                     "storage_state_path": storage_state_path,
                     "auth_profile": auth_profile,
+                    "memory_profile": memory_profile,
                     "proxy_persona": proxy_persona,
                     "totp_enabled": bool(totp_secret),
                 },
@@ -653,6 +666,7 @@ class BrowserManager:
                     "start_url": start_url,
                     "storage_state_path": storage_state_path,
                     "auth_profile": auth_profile,
+                    "memory_profile": memory_profile,
                     "proxy_persona": proxy_persona,
                     "isolation_mode": session.isolation_mode,
                     "browser_node": session.browser_node_name,
@@ -4419,6 +4433,8 @@ class BrowserManager:
         if not host:
             raise PermissionError(f"Could not determine hostname for URL: {url}")
         patterns = self.settings.allowed_host_patterns
+        if "*" in patterns:
+            return
         if not patterns or patterns == ["*"]:
             return
         for pattern in patterns:

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,6 +21,7 @@ from .agent_jobs import AgentJobQueue
 from .approvals import ApprovalRequiredError
 from .audit import get_current_operator, reset_current_operator, set_current_operator
 from .browser_manager import BrowserManager
+from .compliance import VALID_TEMPLATES, apply_compliance_template, write_compliance_manifest
 from .config import get_settings
 from .cron_service import CronService
 from .maintenance import MaintenanceService
@@ -64,6 +67,7 @@ from .orchestrator import BrowserOrchestrator
 from .provider_registry import ProviderRegistry
 from .proxy_personas import ProxyPersonaStore
 from .rate_limits import SlidingWindowRateLimiter, build_rate_limit_key, is_exempt_path
+from .readiness import run_readiness_checks
 from .runtime_policy import validate_runtime_policy
 from .session_share import SessionShareManager
 from .social_errors import SocialActionError
@@ -71,12 +75,21 @@ from .tool_gateway import McpToolGateway
 from .tool_inputs import CreateCronJobInput, CreateProxyPersonaInput, TriggerCronJobInput
 from .vision_target import VisionTargeter
 
-logging.basicConfig(level=logging.INFO)
+_log_level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(level=_log_level)
 logger = logging.getLogger(__name__)
 
-_VERSION = "0.5.4"
+_VERSION = "0.7.0"
 
 settings = get_settings()
+_compliance_template = settings.compliance_template.upper().strip() if settings.compliance_template else None
+_compliance_overrides: dict[str, object] | None = None
+if _compliance_template:
+    if _compliance_template not in VALID_TEMPLATES:
+        raise RuntimeError(
+            f"Invalid COMPLIANCE_TEMPLATE={_compliance_template!r}. Valid: {sorted(VALID_TEMPLATES)}"
+        )
+    _compliance_overrides = apply_compliance_template(settings, _compliance_template)
 proxy_store = ProxyPersonaStore(settings.proxy_persona_file)
 manager = BrowserManager(settings, proxy_store=proxy_store)
 providers = ProviderRegistry(settings)
@@ -131,6 +144,13 @@ mcp_transport = McpHttpTransport(
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    if _compliance_template and _compliance_overrides is not None:
+        write_compliance_manifest(
+            template_name=_compliance_template,
+            overrides=_compliance_overrides,
+            output_path=Path(settings.compliance_manifest_path),
+        )
+        logger.info("compliance template applied: %s", _compliance_template)
     policy_report = validate_runtime_policy(settings)
     if policy_report.errors:
         raise RuntimeError("Invalid runtime policy:\n- " + "\n- ".join(policy_report.errors))
@@ -187,7 +207,7 @@ async def require_api_bearer_token(request: Request, call_next):
 
     header = request.headers.get("authorization", "")
     expected = f"Bearer {settings.api_bearer_token}"
-    if header != expected:
+    if not hmac.compare_digest(header.encode(), expected.encode()):
         return JSONResponse(
             status_code=401,
             content={"detail": "Missing or invalid bearer token"},
@@ -323,6 +343,17 @@ async def run_maintenance_cleanup() -> dict:
     return await maintenance.run_cleanup()
 
 
+@app.get("/readiness")
+async def get_readiness(mode: str = "normal") -> JSONResponse:
+    if mode not in {"normal", "confidential"}:
+        raise HTTPException(status_code=400, detail="mode must be 'normal' or 'confidential'")
+    report = run_readiness_checks(settings, mode=mode)
+    return JSONResponse(
+        content=report.to_dict(),
+        status_code=200 if report.overall != "fail" else 503,
+    )
+
+
 @app.get("/agent/providers")
 async def list_agent_providers() -> list[dict]:
     return [item.model_dump() for item in orchestrator.list_providers()]
@@ -420,6 +451,7 @@ async def create_session(payload: CreateSessionRequest) -> dict:
             start_url=payload.start_url,
             storage_state_path=payload.storage_state_path,
             auth_profile=payload.auth_profile,
+            memory_profile=payload.memory_profile,
             proxy_persona=payload.proxy_persona,
             request_proxy_server=payload.proxy_server,
             request_proxy_username=payload.proxy_username,

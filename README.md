@@ -5,6 +5,7 @@
 [![MCP Server](https://img.shields.io/badge/MCP-server-blue)](./README.md)
 [![Local First](https://img.shields.io/badge/local-first-0ea5e9)](./README.md)
 [![Glama](https://img.shields.io/badge/Glama-listed-8B5CF6)](https://glama.ai/mcp/servers/LvcidPsyche/auto-browser)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/LvcidPsyche/auto-browser?quickstart=1)
 ![Auto Browser demo](docs/assets/demo.gif)
 
 > **Give your AI agent a real browser — with a human in the loop.**
@@ -28,6 +29,23 @@ If you want one clean mental model, this repo is:
 > **browser agent as an MCP server**
 
 If Auto Browser is useful, a ⭐ helps others find it.
+
+## Compliance Modes
+
+Set `COMPLIANCE_TEMPLATE` to apply a pre-configured security posture:
+
+| Template | Auth Encryption | Operator ID | PII Scrub | Isolation | Max Session Age |
+|---|---|---|---|---|---|
+| `HIPAA` | Required | Required | All layers | `docker_ephemeral` | 4h |
+| `PCI-DSS` | Required | Required | All layers | `docker_ephemeral` | 1h |
+| `SOC2` | - | Required | Network + text | Shared | 24h |
+| `GDPR` | - | - | All layers | Shared | 24h |
+
+```bash
+COMPLIANCE_TEMPLATE=HIPAA docker compose up
+```
+
+A `compliance-manifest.json` is written to `/data/` on startup documenting the applied settings.
 
 ## 3-command quickstart
 
@@ -78,20 +96,24 @@ To see the rest of the common commands:
 make help
 ```
 
-## What’s new in v0.5.3
+## Try it in your browser (no local Docker needed)
 
-**Governance + runtime hardening release.**
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/LvcidPsyche/auto-browser?quickstart=1)
 
-- **Witness receipts** — per-session, hash-chained action receipts for session lifecycle events, approvals, browser actions, takeovers, and auth-material handling
-- **Two protection modes** — `normal` records serious concerns without adding workflow friction; `confidential` blocks unsafe high-risk execution when operator identity, isolation, or auth-state posture is too weak
-- **Session-scoped protection configuration** — `CreateSessionRequest.protection_mode` overrides `WITNESS_PROTECTION_MODE_DEFAULT`
-- **Witness inspection endpoint** — `GET /sessions/{id}/witness`
-- **Approval lifecycle recording** — pending, approved, rejected, and executed approvals now land in Witness as part of the same system of record
-- **Packaged environment surface** — `.env.example` now documents `WITNESS_ROOT`, `WITNESS_ENABLED`, and `WITNESS_PROTECTION_MODE_DEFAULT`
+GitHub Codespaces provisions the full stack automatically. Operator Dashboard and noVNC tabs open within about 90 seconds. No local Docker required.
 
-The `v0.5.3` release shipped with 160 passing tests.
+## What’s new in v0.7.0
 
-Current `main` also adds hosted Witness forwarding and the controller suite is now at 211 passing tests.
+**Readiness, compliance, memory, and integration release.**
+
+- **Deployment readiness advisor** — `GET /readiness` and `browser.readiness_check` score encryption, operator identity, isolation, Witness posture, host allowlists, PII scrubbing, and upload approval
+- **Compliance templates** — `COMPLIANCE_TEMPLATE` can snap the runtime into HIPAA, SOC2, GDPR, or PCI-DSS defaults and emits a startup manifest to `/data/compliance-manifest.json`
+- **Memory profiles for agents** — save reusable workflow memory, load it into future sessions with `memory_profile`, and inject that context into orchestrated runs
+- **Codespaces live demos** — the repo now ships a GitHub Codespaces devcontainer plus a Codespaces compose override for one-click hosted demos
+- **LangChain / LangGraph / CrewAI adapters** — integration package and examples under `integrations/langchain/` and `examples/`
+- **Hardening fixes** — constant-time bearer token comparison, safer storage access validation, lower-noise PII defaults, bounded MCP session persistence, and vision targeting gated behind `ANTHROPIC_API_KEY`
+
+Current verification on the release tree: 260 passing controller tests, with Unix-socket-only cases skipped on Windows hosts.
 
 ---
 

@@ -86,6 +86,41 @@ class BrowserOrchestratorLoopGuardTests(unittest.IsolatedAsyncioTestCase):
         self.manager.request_human_takeover.assert_awaited_once()
         self.assertEqual(self.manager.execute_decision.await_count, 3)
 
+    async def test_step_prefixes_goal_with_memory_context(self) -> None:
+        class MemoryAwareAdapter:
+            default_model = "test-model"
+
+            def __init__(self) -> None:
+                self.last_goal = ""
+
+            async def decide(self, **kwargs):
+                self.last_goal = kwargs["goal"]
+                return ProviderDecision(
+                    provider="openai",
+                    model="test-model",
+                    decision=BrowserActionDecision(
+                        action="done",
+                        reason="Enough context",
+                        risk_category="read",
+                    ),
+                    usage={"provider": "fake"},
+                    raw_text='{"action":"done"}',
+                )
+
+        adapter = MemoryAwareAdapter()
+        self.session.metadata = {"memory_context": "[Memory: checkout]\nKnown selector: #buy"}
+        orchestrator = BrowserOrchestrator(self.manager, StaticRegistry(adapter))
+
+        result = await orchestrator.step(
+            session_id="session-1",
+            provider_name="openai",
+            goal="Click the buy button",
+        )
+
+        self.assertEqual(result.status, "done")
+        self.assertIn("[Memory: checkout]", adapter.last_goal)
+        self.assertIn("Current goal: Click the buy button", adapter.last_goal)
+
 
 if __name__ == "__main__":
     unittest.main()
