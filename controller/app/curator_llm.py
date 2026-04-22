@@ -84,8 +84,8 @@ class CuratorLLMAdapter:
             return None
         if not adapter.ready:
             logger.info(
-                "curator: no API key for provider=%s (env %s) — degraded mode",
-                adapter.provider, adapter._api_key_env(),
+                "curator: no API key configured for provider=%s — degraded mode",
+                adapter.provider,
             )
             return None
         return adapter

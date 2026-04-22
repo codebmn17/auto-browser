@@ -44,6 +44,17 @@ class CuratorLLMAdapterTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {"CURATOR_PROVIDER": "openai"}, clear=True):
             self.assertIsNone(CuratorLLMAdapter.from_env())
 
+    async def test_from_env_missing_key_does_not_log_env_var_name(self) -> None:
+        with (
+            patch.dict(os.environ, {"CURATOR_PROVIDER": "openai"}, clear=True),
+            self.assertLogs("app.curator_llm", level="INFO") as captured,
+        ):
+            self.assertIsNone(CuratorLLMAdapter.from_env())
+
+        joined = "\n".join(captured.output)
+        self.assertIn("provider=openai", joined)
+        self.assertNotIn("OPENAI_API_KEY", joined)
+
     async def test_complete_builds_claude_request_and_extracts_text(self) -> None:
         fake_client = _FakeAsyncClient(
             _FakeResponse({"content": [{"type": "text", "text": "claude-output"}]})
