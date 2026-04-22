@@ -72,3 +72,32 @@ class MainAuthTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), [{"id": "session-1"}])
+
+    def test_dashboard_bootstrap_page_is_exempt_from_initial_auth_headers(self) -> None:
+        with patch.object(main_module.settings, "require_operator_id", True):
+            response = self.client.get("/dashboard")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(main_module.settings.operator_id_header, response.text)
+        self.assertIn(main_module.settings.operator_name_header, response.text)
+
+    def test_legacy_ui_redirects_to_dashboard_bootstrap(self) -> None:
+        with patch.object(main_module.settings, "require_operator_id", True):
+            response = self.client.get("/ui/", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 307)
+        self.assertEqual(response.headers["location"], "/dashboard")
+
+    def test_mesh_receive_is_exempt_from_bootstrap_auth(self) -> None:
+        body = {
+            "sender_node_id": "peer-1",
+            "recipient_node_id": "node-1",
+            "nonce": "nonce-1",
+            "timestamp": 1.0,
+            "payload": {},
+            "signature_b64": "ZmFrZQ==",
+        }
+        with patch.object(main_module.settings, "require_operator_id", True):
+            response = self.client.post("/mesh/receive", json=body)
+
+        self.assertEqual(response.status_code, 503)

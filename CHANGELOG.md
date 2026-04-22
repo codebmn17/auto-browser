@@ -4,6 +4,23 @@ All notable changes to auto-browser are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Redirected legacy `/ui/` requests to `/dashboard` so secured deployments consistently land on the bootstrap-aware operator dashboard
+
+## [1.0.0] — 2026-04-21
+
+### Added
+- Signed mesh envelopes, peer registry routes, and delegation plumbing for trusted node-to-node work distribution
+- Session network inspection, CDP passthrough, workflow routes, social route surface, and the bootstrap-aware `/dashboard`
+- Curator, Veo3/research, and social client packages merged into the controller tree for the 1.0 release line
+
+### Fixed
+- Mesh recipient validation so signed envelopes cannot be replayed to the wrong node
+- False-success delegation responses when tool/workflow/session handlers fail or require approval
+- Session network and CDP wiring so session lifecycle hooks register inspectors and passthrough state correctly
+- Windows agent-job persistence, audit retention ordering, and tar extraction safety in the host test path
+- Legacy `/ui/` routing and operator-auth bootstrap handling so secured deployments land on the current dashboard
+
 ## [0.7.0] — 2026-04-17
 
 ### Added

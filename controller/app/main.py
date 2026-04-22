@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from starlette.responses import StreamingResponse
@@ -79,7 +79,7 @@ _log_level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), loggi
 logging.basicConfig(level=_log_level)
 logger = logging.getLogger(__name__)
 
-_VERSION = "0.7.0"
+_VERSION = "1.0.0"
 
 settings = get_settings()
 _compliance_template = settings.compliance_template.upper().strip() if settings.compliance_template else None
@@ -161,6 +161,12 @@ async def lifespan(_: FastAPI):
     await cron_service.startup()
     await maintenance.startup()
     try:
+        from .startup.extensions import register_extensions
+
+        register_extensions(app)
+    except Exception as exc:
+        logger.error("v1.0 extensions init failed (non-fatal): %s", exc)
+    try:
         yield
     finally:
         await maintenance.shutdown()
@@ -176,12 +182,25 @@ app = FastAPI(
     summary="Visual Auto Browser control plane for LLM workflows.",
 )
 
+app.state.browser_manager = manager
+app.state.tool_gateway = tool_gateway
+app.state.settings = settings
+
 app.mount("/artifacts", StaticFiles(directory=settings.artifact_root), name="artifacts")
 
-# Operator dashboard — served at /ui/
-_UI_DIR = Path(__file__).parent / "ui"
-if _UI_DIR.exists():
-    app.mount("/ui", StaticFiles(directory=str(_UI_DIR), html=True), name="ui")
+try:
+    from .routes.extensions import register_all_routers
+
+    register_all_routers(app)
+except Exception as exc:
+    logger.error("v1.0 routers registration failed (non-fatal): %s", exc)
+
+# Legacy operator dashboard aliases now redirect to the auth-bootstrap-aware dashboard.
+@app.get("/ui", include_in_schema=False)
+@app.get("/ui/", include_in_schema=False)
+@app.get("/ui/{rest_of_path:path}", include_in_schema=False)
+async def legacy_ui_redirect(_: Request, rest_of_path: str = "") -> RedirectResponse:
+    return RedirectResponse(url="/dashboard", status_code=307)
 
 
 @app.exception_handler(KeyError)
@@ -202,7 +221,13 @@ async def handle_browser_action_error(_: Request, exc: BrowserActionError) -> JS
 
 @app.middleware("http")
 async def require_api_bearer_token(request: Request, call_next):
-    if request.url.path in {"/healthz", "/readyz"} or not settings.api_bearer_token:
+    path = request.url.path
+    if (
+        path in {"/healthz", "/readyz", "/mesh/receive"}
+        or path.startswith("/dashboard")
+        or path.startswith("/ui")
+        or not settings.api_bearer_token
+    ):
         return await call_next(request)
 
     header = request.headers.get("authorization", "")
@@ -254,7 +279,18 @@ async def enforce_rate_limits(request: Request, call_next):
 @app.middleware("http")
 async def bind_operator_identity(request: Request, call_next):
     path = request.url.path
-    exempt_prefixes = ("/healthz", "/readyz", "/docs", "/openapi.json", "/redoc", "/artifacts", "/metrics")
+    exempt_prefixes = (
+        "/healthz",
+        "/readyz",
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+        "/artifacts",
+        "/metrics",
+        "/dashboard",
+        "/ui",
+        "/mesh/receive",
+    )
     operator_id = request.headers.get(settings.operator_id_header)
     operator_name = request.headers.get(settings.operator_name_header)
 

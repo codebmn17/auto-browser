@@ -109,7 +109,7 @@ class FileAuditStore:
                 if operator_id and event.operator.id != operator_id:
                     continue
                 events.append(event)
-        events.sort(key=lambda item: (item.timestamp, item.id), reverse=True)
+        events.reverse()
         return events[:limit]
 
     def _trim_sync(self) -> None:
@@ -209,9 +209,9 @@ class SQLiteAuditStore:
                 conn.execute(
                     """
                     DELETE FROM audit_events
-                    WHERE id IN (
-                        SELECT id FROM audit_events
-                        ORDER BY timestamp DESC, id DESC
+                    WHERE rowid IN (
+                        SELECT rowid FROM audit_events
+                        ORDER BY rowid DESC
                         LIMIT -1 OFFSET ?
                     )
                     """,
@@ -227,7 +227,7 @@ class SQLiteAuditStore:
         operator_id: str | None,
     ) -> list[AuditEvent]:
         query = "SELECT payload FROM audit_events WHERE 1=1"
-        params: list[str] = []
+        params: list[object] = []
         if session_id:
             query += " AND session_id = ?"
             params.append(session_id)
@@ -237,8 +237,8 @@ class SQLiteAuditStore:
         if operator_id:
             query += " AND operator_id = ?"
             params.append(operator_id)
-        query += " ORDER BY timestamp DESC, id DESC LIMIT ?"
-        params.append(str(limit))
+        query += " ORDER BY rowid DESC LIMIT ?"
+        params.append(limit)
         with closing(self._connect()) as conn, conn:
             rows = conn.execute(query, params).fetchall()
         return [AuditEvent.model_validate_json(row[0]) for row in rows]

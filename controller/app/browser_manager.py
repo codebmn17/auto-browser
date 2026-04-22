@@ -12,7 +12,7 @@ import tarfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -122,6 +122,10 @@ class BrowserSession:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+SessionCreatedHook = Callable[[str, Page], Awaitable[None]]
+SessionClosedHook = Callable[[str], Awaitable[None]]
+
+
 class BrowserManager:
     def __init__(self, settings: Settings, *, proxy_store: Any | None = None):
         self.settings = settings
@@ -184,6 +188,17 @@ class BrowserManager:
         self.witness_policy = WitnessPolicyEngine()
         self.runtime_provisioner = DockerBrowserNodeProvisioner(self.settings)
         self.tunnel_broker = IsolatedSessionTunnelBroker(self.settings)
+        self._session_created_hook: SessionCreatedHook | None = None
+        self._session_closed_hook: SessionClosedHook | None = None
+
+    def register_extension_hooks(
+        self,
+        *,
+        session_created: SessionCreatedHook | None = None,
+        session_closed: SessionClosedHook | None = None,
+    ) -> None:
+        self._session_created_hook = session_created
+        self._session_closed_hook = session_closed
 
     def get_remote_access_info(self, session_id: str | None = None) -> dict[str, Any]:
         if session_id:
@@ -629,6 +644,11 @@ class BrowserManager:
                 session.network_inspector = inspector
 
             self.sessions[session_id] = session
+            if self._session_created_hook is not None:
+                try:
+                    await self._session_created_hook(session_id, page)
+                except Exception as exc:
+                    logger.warning("session created hook failed for %s: %s", session_id, exc)
 
             if start_url:
                 await page.goto(start_url, wait_until="domcontentloaded")
@@ -3322,6 +3342,11 @@ class BrowserManager:
                 if session.runtime is not None:
                     await self.runtime_provisioner.release(session.runtime)
             self.sessions.pop(session_id, None)
+            if self._session_closed_hook is not None:
+                try:
+                    await self._session_closed_hook(session_id)
+                except Exception as exc:
+                    logger.warning("session closed hook failed for %s: %s", session_id, exc)
             await self.audit.append(
                 event_type="session_closed",
                 status="ok",
@@ -4751,7 +4776,7 @@ class BrowserManager:
                 dest_dir = auth_root / top
                 if dest_dir.exists() and not overwrite:
                     raise FileExistsError(f"profile '{top}' already exists — pass overwrite=true")
-                tar.extractall(path=str(auth_root))
+                tar.extractall(path=str(auth_root), filter="data")
                 return top
 
         profile_name = await asyncio.to_thread(_extract)
