@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -26,10 +27,12 @@ class AgentJobStore:
         status: AgentJobStatus | None = None,
         session_id: str | None = None,
     ) -> list[AgentJobRecord]:
-        return await asyncio.to_thread(self._list_sync, status, session_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._list_sync, status, session_id)
 
     async def get(self, job_id: str) -> AgentJobRecord:
-        return await asyncio.to_thread(self._get_sync, job_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._get_sync, job_id)
 
     async def create(self, *, session_id: str, kind: str, request: dict, operator=None) -> AgentJobRecord:
         async with self._lock:
@@ -88,7 +91,14 @@ class AgentJobStore:
         path = self.root / f"{record.id}.json"
         tmp_path = path.with_suffix(".json.tmp")
         tmp_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
-        tmp_path.replace(path)
+        for attempt in range(5):
+            try:
+                tmp_path.replace(path)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
 
 
 

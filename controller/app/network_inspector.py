@@ -28,10 +28,11 @@ Each entry:
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 from collections import deque
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -43,6 +44,8 @@ from .utils import UTC
 logger = logging.getLogger(__name__)
 
 _SKIP_RESOURCE_TYPES = frozenset({"image", "font", "media", "websocket"})
+
+HookFn = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class NetworkInspector:
@@ -73,6 +76,7 @@ class NetworkInspector:
         self._pending: dict[str, dict[str, Any]] = {}  # request_id → partial entry
         self._page: "Page | None" = None
         self._lock = asyncio.Lock()
+        self._hooks: dict[str, HookFn] = {}
 
     def attach(self, page: "Page") -> None:
         """Register listeners on a Playwright Page."""
@@ -127,7 +131,26 @@ class NetworkInspector:
             "total": len(items),
             "failed": sum(1 for e in items if e.get("failed")),
             "pii_redacted": sum(1 for e in items if e.get("pii_redacted")),
+            "hooks": len(self._hooks),
         }
+
+    def register_hook(self, url_pattern: str, fn: HookFn) -> None:
+        self._hooks[url_pattern] = fn
+
+    def remove_hook(self, url_pattern: str) -> bool:
+        return self._hooks.pop(url_pattern, None) is not None
+
+    def list_hooks(self) -> list[str]:
+        return list(self._hooks.keys())
+
+    async def _fire_hooks(self, entry: dict[str, Any]) -> None:
+        url = entry.get("url") or ""
+        for pattern, fn in list(self._hooks.items()):
+            if fnmatch.fnmatch(url, pattern):
+                try:
+                    await fn(entry)
+                except Exception as exc:
+                    logger.warning("network inspector hook %r raised: %s", pattern, exc)
 
     # ── Listeners (synchronous wrappers → schedule async work) ─────────────
 
@@ -273,6 +296,7 @@ class NetworkInspector:
                 entry["duration_ms"] = _elapsed_ms(entry)
                 entry.pop("_started_at", None)
                 self._log.append(entry)
+            await self._fire_hooks(entry)
 
         except Exception as exc:
             logger.debug("network inspector requestfailed error: %s", exc)
@@ -290,6 +314,7 @@ class NetworkInspector:
                 entry["duration_ms"] = _elapsed_ms(entry)
                 entry.pop("_started_at", None)
                 self._log.append(entry)
+            await self._fire_hooks(entry)
 
         except Exception as exc:
             logger.debug("network inspector requestfinished error: %s", exc)

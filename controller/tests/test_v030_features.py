@@ -252,7 +252,7 @@ class TestAuthExportImport(unittest.TestCase):
             BrowserManager._write_tar(profile_dir, archive_path)
 
             with tarfile.open(str(archive_path), "r:gz") as t:
-                t.extractall(path=dst_tmp)
+                t.extractall(path=dst_tmp, filter="data")
 
             extracted = Path(dst_tmp) / "test-profile" / "state.json"
             self.assertTrue(extracted.exists())
