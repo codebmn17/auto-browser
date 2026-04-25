@@ -163,7 +163,7 @@ class ShareHttpTests(unittest.TestCase):
             response = self.client.post("/sessions/missing/share", json={"ttl_minutes": 15})
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["detail"], "Unknown session: missing")
+        self.assertEqual(response.json()["detail"], "Unknown session")
 
     def test_shared_observe_returns_404_for_missing_shared_session(self) -> None:
         token_info = Mock(return_value={"valid": True, "session_id": "missing", "scope": SCOPE_OBSERVE})
@@ -175,7 +175,7 @@ class ShareHttpTests(unittest.TestCase):
             response = self.client.get("/share/fake-token/observe")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["detail"], "Unknown session: missing")
+        self.assertEqual(response.json()["detail"], "Unknown session")
 
     def test_shared_observe_rejects_invalid_token(self) -> None:
         token_info = Mock(return_value={"valid": False, "error": "invalid share token"})
@@ -211,7 +211,7 @@ class ShareHttpTests(unittest.TestCase):
             response = self.client.get("/share/fake-token")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["detail"], "Unknown session: missing")
+        self.assertEqual(response.json()["detail"], "Unknown session")
 
     def test_shared_session_page_rejects_invalid_token(self) -> None:
         token_info = Mock(return_value={"valid": False, "error": "invalid share token"})
