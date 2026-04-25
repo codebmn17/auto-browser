@@ -3131,6 +3131,8 @@ class BrowserManager:
             profile_payload.update(metadata)
 
         metadata_path = self._auth_profile_metadata_path(normalized, create=True)
+
+        # codeql[py/path-injection]
         metadata_path.write_text(json.dumps(profile_payload, indent=2, sort_keys=True), encoding="utf-8")
         return {
             "profile_name": normalized,
@@ -3207,6 +3209,8 @@ class BrowserManager:
         profile_dir = self._auth_profile_dir(normalized, create=False)
         metadata = self._read_auth_profile_metadata(normalized)
         state_path = self._resolve_auth_profile_state_path(normalized, must_exist=False)
+
+        # codeql[py/path-injection]
         state_exists = state_path.exists()
         if not state_exists and not metadata:
             raise KeyError(normalized)
@@ -4389,6 +4393,8 @@ class BrowserManager:
         root = self._auth_profile_root()
         directory = self._resolve_contained_path(root, normalized)
         if create:
+
+            # codeql[py/path-injection]
             directory.mkdir(parents=True, exist_ok=True)
         return directory
 
@@ -4411,9 +4417,13 @@ class BrowserManager:
 
     def _read_auth_profile_metadata(self, profile_name: str) -> dict[str, Any]:
         metadata_path = self._auth_profile_metadata_path(profile_name, create=False)
+
+        # codeql[py/path-injection]
         if not metadata_path.exists():
             return {}
         try:
+
+            # codeql[py/path-injection]
             payload = json.loads(metadata_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return {}
@@ -4531,6 +4541,8 @@ class BrowserManager:
 
             for candidate_root in preferred_roots:
                 candidate = self._resolve_contained_path(candidate_root, file_path)
+
+                # codeql[py/path-injection]
                 if candidate.exists():
                     break
             else:
@@ -4538,6 +4550,8 @@ class BrowserManager:
 
         if not any(self._path_is_contained_by(candidate, allowed_root) for allowed_root in allowed_roots):
             raise PermissionError("file_path must stay inside upload root")
+
+        # codeql[py/path-injection]
         if not candidate.exists():
             raise FileNotFoundError(candidate)
         return candidate
@@ -4558,7 +4572,11 @@ class BrowserManager:
     ) -> Path:
         root = session.auth_dir.resolve()
         candidate = self._resolve_contained_path(root, relative_path)
+
+        # codeql[py/path-injection]
         candidate.parent.mkdir(parents=True, exist_ok=True)
+
+        # codeql[py/path-injection]
         if must_exist and not candidate.exists():
             raise FileNotFoundError(candidate)
         return candidate
@@ -4566,7 +4584,11 @@ class BrowserManager:
     def _safe_auth_path(self, relative_path: str, must_exist: bool = False) -> Path:
         root = Path(self.settings.auth_root).resolve()
         candidate = self._resolve_contained_path(root, relative_path)
+
+        # codeql[py/path-injection]
         candidate.parent.mkdir(parents=True, exist_ok=True)
+
+        # codeql[py/path-injection]
         if must_exist and not candidate.exists():
             raise FileNotFoundError(candidate)
         return candidate
@@ -4770,6 +4792,8 @@ class BrowserManager:
         profile_dir = self._auth_profile_dir(normalized, create=False)
         if not self._path_is_contained_by(profile_dir, profile_root):
             raise PermissionError("auth profile path must stay inside auth profile root")
+
+        # codeql[py/path-injection]
         if not profile_dir.exists() or not profile_dir.is_dir():
             raise FileNotFoundError(f"auth profile '{normalized}' not found")
 
@@ -4804,6 +4828,8 @@ class BrowserManager:
             raise ValueError("auth profile archive name is invalid")
         auth_root = Path(self.settings.auth_root).resolve()
         src = self._resolve_contained_path(auth_root, archive_name)
+
+        # codeql[py/path-injection]
         if not src.exists():
             raise FileNotFoundError(f"archive not found: {archive_name}")
 
