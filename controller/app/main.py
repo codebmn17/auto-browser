@@ -501,6 +501,8 @@ async def execute_approval(approval_id: str) -> dict:
         raise HTTPException(status_code=409, detail="Conflict") from None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.get("/sessions")
@@ -564,13 +566,23 @@ async def get_auth_profile(profile_name: str) -> dict:
 
 @app.get("/sessions/{session_id}/observe")
 async def observe(session_id: str, limit: int = 40, preset: str = "normal") -> dict:
-    return await manager.observe(session_id, limit=limit, preset=preset)
+    try:
+        return await manager.observe(session_id, limit=limit, preset=preset)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown session") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/observe")
 async def observe_post(session_id: str, payload: ObserveRequest) -> dict:
     """Observe with a perception preset. POST body allows richer options than query params."""
-    return await manager.observe(session_id, limit=payload.limit, preset=payload.preset)
+    try:
+        return await manager.observe(session_id, limit=payload.limit, preset=payload.preset)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown session") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/screenshot")
@@ -620,6 +632,8 @@ async def navigate(session_id: str, payload: NavigateRequest) -> dict:
         raise HTTPException(status_code=403, detail="Not permitted") from None
     except ApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/click")
@@ -638,6 +652,8 @@ async def click(session_id: str, payload: ClickRequest) -> dict:
         raise HTTPException(status_code=403, detail="Not permitted") from None
     except ApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/type")
@@ -657,6 +673,8 @@ async def type_text(session_id: str, payload: TypeRequest) -> dict:
         raise HTTPException(status_code=403, detail="Not permitted") from None
     except ApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/press")
@@ -667,6 +685,8 @@ async def press_key(session_id: str, payload: PressRequest) -> dict:
         raise HTTPException(status_code=403, detail="Not permitted") from None
     except ApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/scroll")
@@ -675,6 +695,8 @@ async def scroll(session_id: str, payload: ScrollRequest) -> dict:
         return await manager.scroll(session_id, payload.delta_x, payload.delta_y)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/execute")
@@ -691,6 +713,8 @@ async def execute_action(session_id: str, payload: ExecuteActionRequest) -> dict
         raise HTTPException(status_code=403, detail="Not permitted") from None
     except ApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/upload")
@@ -712,6 +736,8 @@ async def upload(session_id: str, payload: UploadRequest) -> dict:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/hover")
@@ -730,6 +756,8 @@ async def hover(session_id: str, payload: HoverRequest) -> dict:
         raise HTTPException(status_code=403, detail="Not permitted") from None
     except ApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/select-option")
@@ -749,11 +777,18 @@ async def select_option(session_id: str, payload: SelectOptionRequest) -> dict:
         raise HTTPException(status_code=403, detail="Not permitted") from None
     except ApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/wait")
 async def wait(session_id: str, payload: WaitRequest) -> dict:
-    return await manager.wait(session_id, payload.wait_ms)
+    try:
+        return await manager.wait(session_id, payload.wait_ms)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown session") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/reload")
@@ -764,6 +799,8 @@ async def reload(session_id: str) -> dict:
         raise HTTPException(status_code=403, detail="Not permitted") from None
     except ApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/go-back")
@@ -774,6 +811,8 @@ async def go_back(session_id: str) -> dict:
         raise HTTPException(status_code=403, detail="Not permitted") from None
     except ApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/actions/go-forward")
@@ -784,11 +823,18 @@ async def go_forward(session_id: str) -> dict:
         raise HTTPException(status_code=403, detail="Not permitted") from None
     except ApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/social/scroll")
 async def social_scroll_feed(session_id: str, payload: SocialScrollRequest) -> dict:
-    return await manager.scroll_feed(session_id, direction=payload.direction, screens=payload.screens)
+    try:
+        return await manager.scroll_feed(session_id, direction=payload.direction, screens=payload.screens)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown session") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.get("/sessions/{session_id}/social/posts")
@@ -816,6 +862,8 @@ async def social_post(session_id: str, payload: SocialPostRequest) -> dict:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/social/comment")
@@ -833,6 +881,8 @@ async def social_comment(session_id: str, payload: SocialCommentRequest) -> dict
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/social/like")
@@ -845,6 +895,8 @@ async def social_like(session_id: str, payload: SocialLikeRequest) -> dict:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/social/follow")
@@ -857,6 +909,8 @@ async def social_follow(session_id: str, payload: SocialFollowRequest) -> dict:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/social/unfollow")
@@ -869,6 +923,8 @@ async def social_unfollow(session_id: str, payload: SocialUnfollowRequest) -> di
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/social/repost")
@@ -885,6 +941,8 @@ async def social_repost(session_id: str, payload: SocialRepostRequest) -> dict:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/social/dm")
@@ -902,6 +960,8 @@ async def social_dm(session_id: str, payload: SocialDmRequest) -> dict:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/social/login")
@@ -922,6 +982,8 @@ async def social_login(session_id: str, payload: SocialLoginRequest) -> dict:
         raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/social/search")
@@ -930,6 +992,8 @@ async def social_search(session_id: str, payload: SocialSearchRequest) -> dict:
         return await manager.search_page(session_id, query=payload.query)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.post("/sessions/{session_id}/storage-state")
@@ -1287,6 +1351,8 @@ async def shared_observe(token: str) -> dict:
         return await manager.observe(info["session_id"])
     except KeyError:
         raise HTTPException(status_code=404, detail="Unknown session") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.get("/share/{token}", response_class=HTMLResponse)
