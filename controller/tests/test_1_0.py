@@ -623,7 +623,7 @@ class TestWorkflowEngine:
 
 
 # ===========================================================================
-# Skills Curator LLM adapter (rolled in from v0.8.1)
+# Skills Curator LLM adapter
 # ===========================================================================
 
 class TestCuratorLLMAdapter:

@@ -457,7 +457,7 @@ class McpToolGateway:
                     input_model=SocialSearchInput,
                     handler=self._social_search,
                 ),
-                # ── v0.5.0: Network Inspector ──────────────────────────────
+                # ── Network Inspector ──────────────────────────────────────
                 ToolSpec(
                     name="browser.get_network_log",
                     description=(
@@ -468,7 +468,7 @@ class McpToolGateway:
                     input_model=GetNetworkLogInput,
                     handler=self._get_network_log,
                 ),
-                # ── v0.5.0: Session Forking ────────────────────────────────
+                # ── Session Forking ────────────────────────────────────────
                 ToolSpec(
                     name="browser.fork_session",
                     description=(
@@ -479,7 +479,7 @@ class McpToolGateway:
                     input_model=ForkSessionInput,
                     handler=self._fork_session,
                 ),
-                # ── v0.5.0: DOM / JS Tools ─────────────────────────────────
+                # ── DOM / JS Tools ─────────────────────────────────────────
                 ToolSpec(
                     name="browser.eval_js",
                     description=(
@@ -538,7 +538,7 @@ class McpToolGateway:
                     input_model=SetViewportInput,
                     handler=self._set_viewport,
                 ),
-                # ── v0.5.0: Cookies & Storage ──────────────────────────────
+                # ── Cookies & Storage ──────────────────────────────────────
                 ToolSpec(
                     name="browser.get_cookies",
                     description=(
@@ -579,7 +579,7 @@ class McpToolGateway:
                     handler=self._set_local_storage,
                     profiles=("full",),
                 ),
-                # ── v0.5.0: Playwright Script Export ──────────────────────
+                # ── Playwright Script Export ───────────────────────────────
                 ToolSpec(
                     name="browser.export_script",
                     description=(
@@ -591,7 +591,7 @@ class McpToolGateway:
                     handler=self._export_script,
                     profiles=("full",),
                 ),
-                # ── v0.5.0: CDP Attach ─────────────────────────────────────
+                # ── CDP Attach ─────────────────────────────────────────────
                 ToolSpec(
                     name="browser.cdp_attach",
                     description=(
@@ -604,7 +604,7 @@ class McpToolGateway:
                     handler=self._cdp_attach,
                     profiles=("full",),
                 ),
-                # ── v0.5.0: Vision-Grounded Targeting ─────────────────────
+                # ── Vision-Grounded Targeting ─────────────────────────────
                 ToolSpec(
                     name="browser.find_by_vision",
                     description=(
@@ -615,7 +615,7 @@ class McpToolGateway:
                     input_model=VisionFindInput,
                     handler=self._find_by_vision,
                 ),
-                # ── v0.5.0: Shared Session Links ───────────────────────────
+                # ── Shared Session Links ───────────────────────────────────
                 ToolSpec(
                     name="browser.share_session",
                     description=(
@@ -627,7 +627,7 @@ class McpToolGateway:
                     handler=self._share_session,
                     profiles=("full",),
                 ),
-                # ── v0.5.0: Shadow Browsing ────────────────────────────────
+                # ── Shadow Browsing ────────────────────────────────────────
                 ToolSpec(
                     name="browser.enable_shadow_browse",
                     description=(
@@ -639,7 +639,7 @@ class McpToolGateway:
                     handler=self._enable_shadow_browse,
                     profiles=("full",),
                 ),
-                # ── v0.5.0: Proxy Personas ─────────────────────────────────
+                # ── Proxy Personas ─────────────────────────────────────────
                 ToolSpec(
                     name="browser.list_proxy_personas",
                     description=(
@@ -668,7 +668,7 @@ class McpToolGateway:
                     handler=self._delete_proxy_persona,
                     profiles=("full",),
                 ),
-                # ── v0.5.0: Cron / Webhook Triggers ───────────────────────
+                # ── Cron / Webhook Triggers ────────────────────────────────
                 ToolSpec(
                     name="browser.list_cron_jobs",
                     description="List all configured cron / webhook trigger jobs.",
@@ -701,7 +701,7 @@ class McpToolGateway:
                     handler=self._trigger_cron_job,
                     profiles=("full",),
                 ),
-                # ── v0.5.0: PII Scrubber Status ───────────────────────────
+                # ── PII Scrubber Status ────────────────────────────────────
                 ToolSpec(
                     name="browser.pii_scrubber_status",
                     description=(
@@ -995,7 +995,7 @@ class McpToolGateway:
     async def _social_search(self, payload: SocialSearchInput) -> dict[str, Any]:
         return await self.manager.search_page(payload.session_id, query=payload.query)
 
-    # ── v0.5.0 handlers ────────────────────────────────────────────────────
+    # ── Extended tool handlers ──────────────────────────────────────────────
 
     async def _get_network_log(self, payload: GetNetworkLogInput) -> dict[str, Any]:
         return await self.manager.get_network_log(

@@ -1305,7 +1305,7 @@ async def close_session(session_id: str) -> dict:
     return await manager.close_session(session_id)
 
 
-# ── v0.5.0 endpoints ───────────────────────────────────────────────────────
+# ── Extended browser endpoints ──────────────────────────────────────────────
 
 @app.get("/sessions/{session_id}/network-log")
 async def get_network_log(

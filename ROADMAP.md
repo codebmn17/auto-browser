@@ -2,7 +2,7 @@
 
 This is the near-term direction for Auto Browser.
 
-## Now (shipped in v0.5.0)
+## Now (current in v1.0.1)
 
 - stable local-first browser control
 - reusable auth profiles + import/export
@@ -21,7 +21,7 @@ This is the near-term direction for Auto Browser.
 - Vision-grounded targeting — Claude Vision element identification
 - Cron + webhook triggers — autonomous scheduled jobs
 - MCP Resources Protocol — live browser state as subscribable resources
-- Operator dashboard at `/ui/` with SSE event stream
+- Operator dashboard at `/dashboard` with SSE event stream
 
 ## Next
 
@@ -34,6 +34,7 @@ This is the near-term direction for Auto Browser.
 
 ## Recently Shipped
 
+- v1.0.1 security hardening, auth-profile archive fixes, client SDK repair, and dashboard XSS cleanup
 - Agent memory profiles for cross-session context persistence
 - Deployment readiness advisor with compliance mode checks
 - Compliance templates (HIPAA, SOC2, GDPR, PCI-DSS) via a single env var

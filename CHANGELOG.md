@@ -17,6 +17,7 @@ All notable changes to auto-browser are documented here.
 - Rebuilt the operator dashboard tables with DOM text nodes and validated links instead of interpolating untrusted values into `innerHTML`
 - Fixed the active-session dashboard stat update
 - Updated the bundled operator UI version label to `v1.0.1`
+- Aligned package metadata, launch notes, roadmap text, and stale code comments with the `v1.0.1` release line
 - Redirected legacy `/ui/` requests to `/dashboard` so secured deployments consistently land on the bootstrap-aware operator dashboard
 
 ## [1.0.0] — 2026-04-21

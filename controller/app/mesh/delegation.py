@@ -327,13 +327,13 @@ class DelegationManager:
             )
             return result
 
-        # session:<verb> → session handler (stub; wired in v0.10.0)
+        # session:<verb> → session handler stub
         if cap.startswith("session:"):
             verb = cap[8:]
             logger.info("mesh.delegation.session_verb verb=%s session_id=%s", verb, request.session_id)
             return {"_mesh_error": True, "error": "session delegation not yet wired", "verb": verb}
 
-        # workflow:<name> → workflow engine (stub; wired in v0.10.0)
+        # workflow:<name> → workflow engine stub
         if cap.startswith("workflow:"):
             name = cap[9:]
             logger.info("mesh.delegation.workflow name=%s", name)

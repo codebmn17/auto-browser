@@ -1,4 +1,4 @@
-"""Tests for auto-browser v0.3.0 features.
+"""Tests for Auto Browser extended feature coverage.
 
 Covers:
 - Perception presets (fast/normal/rich)

@@ -10,8 +10,7 @@ Ships with graceful degradation:
   - CLI-only auth (no API key) → `None` adapter, curator falls back to
     raw-skill passthrough. Functional, just no pre-synthesis.
 
-Originally landed in v0.8.1 (2026-04-19) but never pushed to main.
-Rolled into v1.0.0 by explicit choice during the pre-tag review.
+Carried into the current release line from an earlier staging branch.
 """
 from __future__ import annotations
 

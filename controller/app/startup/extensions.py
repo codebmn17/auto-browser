@@ -43,7 +43,7 @@ def register_extensions(app) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Skills Curator adapter (rolled in from v0.8.1)
+# Skills Curator adapter
 # ---------------------------------------------------------------------------
 
 def _init_curator(app) -> None:
@@ -380,7 +380,7 @@ async def on_session_closed(app, session_id: str) -> None:
     app.state.network_inspectors.pop(session_id, None)
     app.state.cdp_sessions.pop(session_id, None)
 
-    # Post-session Curator review (rolled in from v0.8.1).
+    # Post-session Curator review.
     # Fire-and-forget — never blocks session close, never raises.
     try:
         curator = getattr(app.state, "curator_adapter", None)

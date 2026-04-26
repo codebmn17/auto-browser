@@ -1,5 +1,6 @@
 {
   "name": "auto-browser-browser-node",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "dependencies": {

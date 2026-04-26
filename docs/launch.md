@@ -36,11 +36,9 @@ Auto Browser is an open-source MCP-native control plane for authorized browser w
 - approval and audit rails
 - MCP + REST API
 
-## Suggested release tag
+## Current release tag
 
-Use `v0.1.0`, not `v1.0.0`.
-
-It reads as a serious first public release without overclaiming maturity.
+Use `v1.0.1` for current public release references.
 
 ## Suggested launch timing
 
@@ -64,7 +62,7 @@ See `docs/good-first-issues.md`.
 - [ ] embed GIF in README (above the fold, before quickstart)
 - [ ] verify no secrets in git history for this branch
 - [ ] prepare first 3 “good first issue” tickets (see `docs/good-first-issues.md`)
-- [ ] create GitHub release `v0.1.0` with changelog
+- [ ] create GitHub release `v1.0.1` with changelog
 - [ ] add GitHub topics: `mcp`, `browser-automation`, `playwright`, `llm`, `claude`, `ai-agent`, `self-hosted`, `local-first`, `fastapi`, `docker`
 
 ### Day 1 launch (same day, in order)
