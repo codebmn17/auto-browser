@@ -4,6 +4,15 @@ All notable changes to auto-browser are documented here.
 
 ## [Unreleased]
 
+## [1.0.2] — 2026-04-26
+
+### Fixed
+- Upgraded FastAPI and Starlette to pick up the latest framework security fixes
+- Replaced remaining client-visible raw exception strings with stable error codes across CDP, OCR, mesh, workflow, tunnel, social, share-token, and browser action paths
+- Bounded request rate-limit buckets and hashed operator identifiers so untrusted headers cannot expand memory or echo raw identity values
+- Tightened default host allowlisting and production runtime policy checks for `ALLOWED_HOSTS`
+- Strengthened auth/upload path containment checks for absolute paths and traversal edge cases
+
 ## [1.0.1] — 2026-04-25
 
 ### Added

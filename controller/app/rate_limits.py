@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import math
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 
 
@@ -19,23 +19,31 @@ class RateLimitDecision:
 
 
 class SlidingWindowRateLimiter:
-    def __init__(self, *, limit: int, window_seconds: int):
+    def __init__(self, *, limit: int, window_seconds: int, max_buckets: int = 4096):
         if limit <= 0:
             raise ValueError("limit must be positive")
         if window_seconds <= 0:
             raise ValueError("window_seconds must be positive")
+        if max_buckets <= 0:
+            raise ValueError("max_buckets must be positive")
         self.limit = limit
         self.window_seconds = window_seconds
+        self.max_buckets = max_buckets
         self._lock = asyncio.Lock()
-        self._events: dict[str, deque[float]] = defaultdict(deque)
+        self._events: OrderedDict[str, deque[float]] = OrderedDict()
 
     async def evaluate(self, key: str, *, now: float | None = None) -> RateLimitDecision:
         timestamp = time.monotonic() if now is None else now
         async with self._lock:
-            bucket = self._events[key]
             cutoff = timestamp - self.window_seconds
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
+            bucket = self._events.get(key)
+            if bucket is None:
+                self._ensure_capacity(cutoff)
+                bucket = deque()
+                self._events[key] = bucket
+            else:
+                self._events.move_to_end(key)
+            self._prune_bucket(bucket, cutoff)
 
             if len(bucket) >= self.limit:
                 retry_after = max(1, math.ceil(self.window_seconds - (timestamp - bucket[0])))
@@ -61,6 +69,24 @@ class SlidingWindowRateLimiter:
                 exceeded=False,
             )
 
+    @staticmethod
+    def _prune_bucket(bucket: deque[float], cutoff: float) -> None:
+        while bucket and bucket[0] <= cutoff:
+            bucket.popleft()
+
+    def _ensure_capacity(self, cutoff: float) -> None:
+        if len(self._events) < self.max_buckets:
+            return
+        for key in list(self._events):
+            bucket = self._events[key]
+            self._prune_bucket(bucket, cutoff)
+            if not bucket:
+                del self._events[key]
+            if len(self._events) < self.max_buckets:
+                return
+        while len(self._events) >= self.max_buckets:
+            self._events.popitem(last=False)
+
 
 def is_exempt_path(path: str, exempt_paths: list[str]) -> bool:
     return any(path == exempt or path.startswith(f"{exempt}/") for exempt in exempt_paths)
@@ -72,11 +98,12 @@ def build_rate_limit_key(
     headers: dict | object,
     client_host: str | None,
 ) -> str:
-    operator_id = getattr(headers, "get", lambda *_args, **_kwargs: None)(operator_id_header)
-    if operator_id:
-        return f"operator:{str(operator_id).strip()}"
     authorization = getattr(headers, "get", lambda *_args, **_kwargs: None)("authorization")
     if authorization:
         token_hash = hashlib.sha256(str(authorization).encode("utf-8")).hexdigest()[:16]
         return f"auth:{token_hash}"
+    operator_id = getattr(headers, "get", lambda *_args, **_kwargs: None)(operator_id_header)
+    if operator_id:
+        operator_hash = hashlib.sha256(str(operator_id).strip().encode("utf-8")).hexdigest()[:16]
+        return f"operator:{operator_hash}"
     return f"ip:{client_host or 'unknown'}"

@@ -297,22 +297,22 @@ def _register_workflow_actions(app) -> None:
                 try:
                     r = await app.state.reddit_client.submit_link(sr, title, video_url)
                     results[f"reddit/{sr}"] = r
-                except Exception as exc:
-                    results[f"reddit/{sr}"] = {"error": str(exc)}
+                except Exception:
+                    results[f"reddit/{sr}"] = {"error": "crosspost_failed"}
 
         if "x" in platforms and app.state.x_client:
             try:
                 r = await app.state.x_client.post_tweet(f"{title}\n\n{video_url}")
                 results["x"] = r
-            except Exception as exc:
-                results["x"] = {"error": str(exc)}
+            except Exception:
+                results["x"] = {"error": "crosspost_failed"}
 
         if "instagram" in platforms and app.state.instagram_client:
             try:
                 r = await app.state.instagram_client.post_reel(video_url, description)
                 results["instagram"] = r
-            except Exception as exc:
-                results["instagram"] = {"error": str(exc)}
+            except Exception:
+                results["instagram"] = {"error": "crosspost_failed"}
 
         return {"results": results}
     engine.register_action("social.crosspost", _crosspost)

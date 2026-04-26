@@ -10,13 +10,15 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
+from fastapi import HTTPException
+
 from .models import ApprovalKind, ApprovalRecord, ApprovalStatus, BrowserActionDecision
 from .utils import UTC, utc_now
 
 logger = logging.getLogger(__name__)
 
 
-class ApprovalRequiredError(RuntimeError):
+class ApprovalRequiredError(HTTPException):
     def __init__(self, approval: ApprovalRecord, message: str | None = None):
         self.approval = approval
         self.payload = {
@@ -24,7 +26,7 @@ class ApprovalRequiredError(RuntimeError):
             "message": message or f"{approval.kind} actions require human approval",
             "approval": approval.model_dump(),
         }
-        super().__init__(self.payload["message"])
+        super().__init__(status_code=409, detail=self.payload)
 
 
 class ApprovalStoreBackend(Protocol):

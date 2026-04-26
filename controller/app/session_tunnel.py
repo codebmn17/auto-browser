@@ -98,8 +98,8 @@ class IsolatedSessionTunnelBroker:
                         stdout=asyncio.subprocess.DEVNULL,
                         stderr=tunnel.stderr_handle,
                     )
-                except Exception as exc:
-                    tunnel.error = str(exc)
+                except Exception:
+                    tunnel.error = "autossh_start_failed"
                     self._write_metadata(tunnel, status="error")
                     tunnel.stderr_handle.close()
                     raise

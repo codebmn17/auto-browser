@@ -225,9 +225,9 @@ class AgentJobQueue:
             record.status = "completed"
             record.result = result.model_dump()
             record.error = None
-        except Exception as exc:
+        except Exception:
             record.status = "failed"
-            record.error = str(exc)
+            record.error = "agent_job_failed"
             record.result = None
         await self.store.update(record)
         await self._audit("agent_job_finished", record.status, record)

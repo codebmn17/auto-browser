@@ -48,11 +48,11 @@ async def mesh_receive(body: MeshReceiveRequest, request: Request):
     envelope = SignedEnvelope(**body.model_dump())
     try:
         response = await delegation_mgr.receive_inbound(envelope)
-    except (DelegationRejected, DelegationReplayError) as exc:
-        raise HTTPException(403, str(exc))
+    except (DelegationRejected, DelegationReplayError):
+        raise HTTPException(403, "Mesh delegation rejected")
     except Exception as exc:
         logger.error("mesh.receive error: %s", exc)
-        raise HTTPException(500, str(exc))
+        raise HTTPException(500, "Mesh receive failed")
 
     identity = app.state.mesh_identity
     reply_payload = response.model_dump(mode="json")
@@ -80,8 +80,8 @@ async def mesh_add_peer(body: dict[str, Any], request: Request):
         raise HTTPException(503, "Mesh not initialized")
     try:
         peer = PeerRecord(**body)
-    except Exception as exc:
-        raise HTTPException(422, str(exc))
+    except Exception:
+        raise HTTPException(422, "Invalid peer record")
     peers.add(peer)
     return {"status": "added", "node_id": peer.node_id}
 
@@ -201,8 +201,8 @@ async def cdp_raw_command(session_id: str, body: dict[str, Any], request: Reques
     params = body.get("params", {})
     try:
         result = await cdp.raw_cdp_command(method, params)
-    except ValueError as exc:
-        raise HTTPException(403, str(exc))
+    except ValueError:
+        raise HTTPException(403, "CDP command is not permitted")
     return result
 
 
@@ -361,24 +361,24 @@ async def social_crosspost(body: CrossPostRequest, request: Request):
                 try:
                     r = await reddit.submit_link(sr, body.title, body.video_url)
                     results[f"reddit/{sr}"] = r
-                except Exception as exc:
-                    results[f"reddit/{sr}"] = {"error": str(exc)}
+                except Exception:
+                    results[f"reddit/{sr}"] = {"error": "crosspost_failed"}
     if "x" in body.platforms:
         x = getattr(request.app.state, "x_client", None)
         if x:
             try:
                 r = await x.post_tweet(f"{body.title}\n\n{body.video_url}")
                 results["x"] = r
-            except Exception as exc:
-                results["x"] = {"error": str(exc)}
+            except Exception:
+                results["x"] = {"error": "crosspost_failed"}
     if "instagram" in body.platforms:
         ig = getattr(request.app.state, "instagram_client", None)
         if ig:
             try:
                 r = await ig.post_reel(body.video_url, body.description)
                 results["instagram"] = r
-            except Exception as exc:
-                results["instagram"] = {"error": str(exc)}
+            except Exception:
+                results["instagram"] = {"error": "crosspost_failed"}
     return {"status": "crossposted", "results": results}
 
 

@@ -157,7 +157,21 @@ def validate_runtime_policy(settings: Settings) -> RuntimePolicyReport:
             "REQUEST_RATE_LIMIT_REQUESTS and REQUEST_RATE_LIMIT_WINDOW_SECONDS must be positive"
         )
 
-    if settings.allowed_hosts.strip() in {"", "example.com", "example.com,localhost"}:
+    if settings.request_rate_limit_max_buckets <= 0:
+        report.errors.append("REQUEST_RATE_LIMIT_MAX_BUCKETS must be positive")
+
+    if "*" in settings.allowed_host_patterns:
+        report.errors.append("ALLOWED_HOSTS=* is not permitted when APP_ENV=production")
+    elif not settings.allowed_host_patterns:
+        report.errors.append("ALLOWED_HOSTS must name at least one host when APP_ENV=production")
+
+    default_allowed_hosts = {
+        "",
+        "example.com",
+        "example.com,localhost",
+        "example.com,localhost,127.0.0.1,::1",
+    }
+    if settings.allowed_hosts.strip() in default_allowed_hosts:
         report.warnings.append(
             "ALLOWED_HOSTS still contains the default placeholder values; tighten it before launch"
         )

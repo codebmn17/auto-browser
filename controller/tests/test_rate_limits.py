@@ -22,21 +22,20 @@ class RateLimitHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(blocked.retry_after_seconds, 8)
         self.assertFalse(reset.exceeded)
 
-    async def test_keys_prefer_operator_then_auth_then_ip(self) -> None:
-        self.assertEqual(
-            build_rate_limit_key(
-                operator_id_header="X-Operator-Id",
-                headers={"X-Operator-Id": "alice", "authorization": "Bearer secret"},
-                client_host="127.0.0.1",
-            ),
-            "operator:alice",
-        )
+    async def test_keys_prefer_auth_then_hashed_operator_then_ip(self) -> None:
         auth_key = build_rate_limit_key(
             operator_id_header="X-Operator-Id",
-            headers={"authorization": "Bearer secret"},
+            headers={"X-Operator-Id": "alice", "authorization": "Bearer secret"},
             client_host="127.0.0.1",
         )
         self.assertTrue(auth_key.startswith("auth:"))
+        operator_key = build_rate_limit_key(
+            operator_id_header="X-Operator-Id",
+            headers={"X-Operator-Id": "alice"},
+            client_host="127.0.0.1",
+        )
+        self.assertTrue(operator_key.startswith("operator:"))
+        self.assertNotIn("alice", operator_key)
         self.assertEqual(
             build_rate_limit_key(
                 operator_id_header="X-Operator-Id",
@@ -45,6 +44,28 @@ class RateLimitHelpersTests(unittest.IsolatedAsyncioTestCase):
             ),
             "ip:127.0.0.1",
         )
+
+    async def test_limiter_evicts_oldest_bucket_at_capacity(self) -> None:
+        limiter = SlidingWindowRateLimiter(limit=10, window_seconds=60, max_buckets=2)
+
+        await limiter.evaluate("operator:first", now=0.0)
+        await limiter.evaluate("operator:second", now=1.0)
+        await limiter.evaluate("operator:third", now=2.0)
+
+        self.assertNotIn("operator:first", limiter._events)
+        self.assertIn("operator:second", limiter._events)
+        self.assertIn("operator:third", limiter._events)
+
+    async def test_limiter_prunes_expired_buckets_before_evicting_active_keys(self) -> None:
+        limiter = SlidingWindowRateLimiter(limit=10, window_seconds=10, max_buckets=2)
+
+        await limiter.evaluate("operator:expired", now=0.0)
+        await limiter.evaluate("operator:active", now=11.0)
+        await limiter.evaluate("operator:new", now=20.0)
+
+        self.assertNotIn("operator:expired", limiter._events)
+        self.assertIn("operator:active", limiter._events)
+        self.assertIn("operator:new", limiter._events)
 
     async def test_exempt_paths_match_prefixes(self) -> None:
         exempt = ["/healthz", "/artifacts", "/metrics"]

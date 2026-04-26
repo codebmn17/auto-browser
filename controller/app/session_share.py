@@ -152,8 +152,8 @@ class SessionShareManager:
                 "expires_at": payload.get("exp"),
                 "seconds_remaining": max(0, payload.get("exp", 0) - int(time.time())),
             }
-        except ValueError as exc:
-            return {"valid": False, "error": str(exc)}
+        except ValueError:
+            return {"valid": False, "error": "Invalid token"}
 
     # ── Private ────────────────────────────────────────────────────────────
 

@@ -80,7 +80,7 @@ _log_level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), loggi
 logging.basicConfig(level=_log_level)
 logger = logging.getLogger(__name__)
 
-_VERSION = "1.0.1"
+_VERSION = "1.0.2"
 
 _SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -94,20 +94,6 @@ def _require_safe_segment(value: str, *, field: str) -> str:
     if not isinstance(value, str) or not _SAFE_PATH_SEGMENT.fullmatch(value):
         raise HTTPException(status_code=400, detail=f"Invalid {field}")
     return value
-
-
-def _approval_payload(exc: ApprovalRequiredError) -> dict[str, object]:
-    """Return a safe approval-required response payload.
-
-    Rebuilds the payload from the typed ``ApprovalRecord`` attribute so no
-    tainted exception attribute reaches the client.
-    """
-    record = exc.approval
-    return {
-        "status": "approval_required",
-        "message": f"{record.kind} actions require human approval",
-        "approval": record.model_dump(),
-    }
 
 
 settings = get_settings()
@@ -154,6 +140,7 @@ rate_limiter = (
     SlidingWindowRateLimiter(
         limit=settings.request_rate_limit_requests,
         window_seconds=settings.request_rate_limit_window_seconds,
+        max_buckets=settings.request_rate_limit_max_buckets,
     )
     if settings.request_rate_limit_enabled
     else None
@@ -495,8 +482,8 @@ async def reject_approval(approval_id: str, payload: ApprovalDecisionRequest) ->
 async def execute_approval(approval_id: str) -> dict:
     try:
         return await manager.execute_approval(approval_id)
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except PermissionError:
         raise HTTPException(status_code=409, detail="Conflict") from None
     except ValueError:
@@ -533,8 +520,8 @@ async def create_session(payload: CreateSessionRequest) -> dict:
         raise HTTPException(status_code=404, detail="Not found") from None
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except RuntimeError:
         raise HTTPException(status_code=409, detail="Conflict") from None
     except Exception:
@@ -630,8 +617,8 @@ async def navigate(session_id: str, payload: NavigateRequest) -> dict:
         return await manager.navigate(session_id, payload.url)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error") from None
 
@@ -650,8 +637,8 @@ async def click(session_id: str, payload: ClickRequest) -> dict:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error") from None
 
@@ -671,8 +658,8 @@ async def type_text(session_id: str, payload: TypeRequest) -> dict:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error") from None
 
@@ -683,8 +670,8 @@ async def press_key(session_id: str, payload: PressRequest) -> dict:
         return await manager.press(session_id, payload.key)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error") from None
 
@@ -711,8 +698,8 @@ async def execute_action(session_id: str, payload: ExecuteActionRequest) -> dict
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error") from None
 
@@ -732,8 +719,8 @@ async def upload(session_id: str, payload: UploadRequest) -> dict:
         raise HTTPException(status_code=404, detail="Not found") from None
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except Exception:
@@ -754,8 +741,8 @@ async def hover(session_id: str, payload: HoverRequest) -> dict:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error") from None
 
@@ -775,8 +762,8 @@ async def select_option(session_id: str, payload: SelectOptionRequest) -> dict:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error") from None
 
@@ -797,8 +784,8 @@ async def reload(session_id: str) -> dict:
         return await manager.reload(session_id)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error") from None
 
@@ -809,8 +796,8 @@ async def go_back(session_id: str) -> dict:
         return await manager.go_back(session_id)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error") from None
 
@@ -821,8 +808,8 @@ async def go_forward(session_id: str) -> dict:
         return await manager.go_forward(session_id)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error") from None
 
@@ -858,8 +845,8 @@ async def social_post(session_id: str, payload: SocialPostRequest) -> dict:
         return await manager.post_content(session_id, text=payload.text, approval_id=payload.approval_id)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except Exception:
@@ -877,8 +864,8 @@ async def social_comment(session_id: str, payload: SocialCommentRequest) -> dict
         )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except Exception:
@@ -891,8 +878,8 @@ async def social_like(session_id: str, payload: SocialLikeRequest) -> dict:
         return await manager.like_post(session_id, post_index=payload.post_index, approval_id=payload.approval_id)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except Exception:
@@ -905,8 +892,8 @@ async def social_follow(session_id: str, payload: SocialFollowRequest) -> dict:
         return await manager.follow_user(session_id, approval_id=payload.approval_id)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except Exception:
@@ -919,8 +906,8 @@ async def social_unfollow(session_id: str, payload: SocialUnfollowRequest) -> di
         return await manager.unfollow_user(session_id, approval_id=payload.approval_id)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except Exception:
@@ -937,8 +924,8 @@ async def social_repost(session_id: str, payload: SocialRepostRequest) -> dict:
         )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except Exception:
@@ -956,8 +943,8 @@ async def social_dm(session_id: str, payload: SocialDmRequest) -> dict:
         )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except Exception:
@@ -978,8 +965,8 @@ async def social_login(session_id: str, payload: SocialLoginRequest) -> dict:
         )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError as exc:
-        raise HTTPException(status_code=409, detail=_approval_payload(exc)) from None
+    except ApprovalRequiredError:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request") from None
     except Exception:
@@ -1346,7 +1333,7 @@ async def shared_observe(token: str) -> dict:
     """Read-only observe endpoint accessible via share token."""
     info = share_manager.token_info(token)
     if not info.get("valid"):
-        raise HTTPException(status_code=403, detail=info.get("error", "Invalid token"))
+        raise HTTPException(status_code=403, detail="Invalid token")
     try:
         return await manager.observe(info["session_id"])
     except KeyError:
@@ -1360,7 +1347,7 @@ async def shared_session_view(token: str) -> HTMLResponse:
     """Lightweight observer page for a shared session token."""
     info = share_manager.token_info(token)
     if not info.get("valid"):
-        raise HTTPException(status_code=403, detail=info.get("error", "Invalid token"))
+        raise HTTPException(status_code=403, detail="Invalid token")
     try:
         await manager.get_session(info["session_id"])
     except KeyError:

@@ -105,7 +105,7 @@ class CDPPassthroughTests(unittest.IsolatedAsyncioTestCase):
         result = await CDPPassthrough(fake).get_element_intelligence(".hero")
 
         self.assertEqual(result["selector"], ".hero")
-        self.assertEqual(result["error"], "boom")
+        self.assertEqual(result["error"], "cdp_element_intelligence_failed")
 
     async def test_raw_cdp_command_enforces_allowlist_and_catches_runtime_errors(self) -> None:
         fake = _FakeCDPSession(
@@ -120,7 +120,7 @@ class CDPPassthroughTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(success["root"]["nodeId"], 1)
 
         error = await passthrough.raw_cdp_command("Runtime.evaluate", {"expression": "1+1"})
-        self.assertEqual(error, {"error": "eval failed", "method": "Runtime.evaluate"})
+        self.assertEqual(error, {"error": "cdp_command_failed", "method": "Runtime.evaluate"})
 
         with self.assertRaisesRegex(ValueError, "not in the allowed list"):
             await passthrough.raw_cdp_command("Page.navigate")

@@ -294,7 +294,7 @@ class OpenAIAdapter(BaseProviderAdapter):
                         continue
                     raise ProviderAPIError(
                         provider=self.provider,
-                        message=str(exc),
+                        message="host bridge network request failed",
                         status_code=None,
                         retryable=True,
                     ) from exc
