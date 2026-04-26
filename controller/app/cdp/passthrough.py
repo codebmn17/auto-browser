@@ -149,7 +149,7 @@ class CDPPassthrough:
 
         except Exception as exc:
             logger.warning("cdp.element_intelligence error selector=%r: %s", selector, exc)
-            return {"error": str(exc), "selector": selector}
+            return {"error": "cdp_element_intelligence_failed", "selector": selector}
 
     async def raw_cdp_command(self, method: str, params: dict[str, Any] = None) -> dict[str, Any]:
         """
@@ -167,7 +167,7 @@ class CDPPassthrough:
             return result
         except Exception as exc:
             logger.warning("cdp.raw_command error method=%r: %s", method, exc)
-            return {"error": str(exc), "method": method}
+            return {"error": "cdp_command_failed", "method": method}
 
     @classmethod
     async def from_page(cls, page: "Page") -> "CDPPassthrough":  # noqa: F821

@@ -762,8 +762,8 @@ class McpToolGateway:
                 structuredContent=detail,
                 isError=True,
             )
-        except Exception as exc:
-            return self._error_response(str(exc))
+        except Exception:
+            return self._error_response("Tool execution failed")
 
     @staticmethod
     def _error_response(message: str) -> McpToolCallResponse:

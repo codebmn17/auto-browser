@@ -151,7 +151,7 @@ class Settings(BaseSettings):
     )
     isolated_tunnel_local_host: str = Field("host.docker.internal", alias="ISOLATED_TUNNEL_LOCAL_HOST")
     isolated_tunnel_info_root: str = Field("/data/tunnels/sessions", alias="ISOLATED_TUNNEL_INFO_ROOT")
-    allowed_hosts: str = Field("*", alias="ALLOWED_HOSTS")
+    allowed_hosts: str = Field("example.com,localhost,127.0.0.1,::1", alias="ALLOWED_HOSTS")
     default_viewport_width: int = Field(1280, alias="DEFAULT_VIEWPORT_WIDTH")
     default_viewport_height: int = Field(800, alias="DEFAULT_VIEWPORT_HEIGHT")
     connect_retries: int = Field(60, alias="CONNECT_RETRIES")
@@ -179,6 +179,7 @@ class Settings(BaseSettings):
     request_rate_limit_enabled: bool = Field(True, alias="REQUEST_RATE_LIMIT_ENABLED")
     request_rate_limit_requests: int = Field(120, alias="REQUEST_RATE_LIMIT_REQUESTS")
     request_rate_limit_window_seconds: int = Field(60, alias="REQUEST_RATE_LIMIT_WINDOW_SECONDS")
+    request_rate_limit_max_buckets: int = Field(4096, alias="REQUEST_RATE_LIMIT_MAX_BUCKETS")
     request_rate_limit_exempt_paths: str = Field(
         "/healthz,/readyz,/docs,/openapi.json,/redoc,/artifacts,/metrics",
         alias="REQUEST_RATE_LIMIT_EXEMPT_PATHS",

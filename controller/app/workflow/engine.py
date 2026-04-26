@@ -143,7 +143,7 @@ class WorkflowEngine:
             run.status = StepStatus.COMPLETED
         except Exception as exc:
             run.status = StepStatus.FAILED
-            run.error = str(exc)
+            run.error = "workflow_run_failed"
             logger.error("workflow.engine: run %s failed: %s", run.run_id, exc)
         finally:
             run.finished_at = time.time()
@@ -176,7 +176,7 @@ class WorkflowEngine:
                     except Exception as exc:
                         failed.add(step.id)
                         run.step_statuses[step.id] = StepStatus.FAILED
-                        run.step_errors[step.id] = str(exc)
+                        run.step_errors[step.id] = "workflow_step_failed"
                         logger.warning("workflow.step %r failed: %s", step.id, exc)
                     progress = True
                     break  # restart loop to re-evaluate ready steps

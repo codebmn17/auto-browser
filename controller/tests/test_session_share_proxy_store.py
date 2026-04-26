@@ -59,7 +59,7 @@ class SessionShareManagerTests(unittest.TestCase):
         info = manager.token_info(token)
 
         self.assertFalse(info["valid"])
-        self.assertIn("token exp must be an integer", info["error"])
+        self.assertEqual(info["error"], "Invalid token")
 
     def test_rejects_unsupported_scope(self) -> None:
         manager = SessionShareManager(secret="secret123", ttl_minutes=10)
@@ -184,7 +184,7 @@ class ShareHttpTests(unittest.TestCase):
             response = self.client.get("/share/fake-token/observe")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"], "invalid share token")
+        self.assertEqual(response.json()["detail"], "Invalid token")
 
     def test_shared_session_page_renders_html_for_valid_token(self) -> None:
         token_info = Mock(return_value={"valid": True, "session_id": "session-1", "scope": SCOPE_OBSERVE})
@@ -220,7 +220,7 @@ class ShareHttpTests(unittest.TestCase):
             response = self.client.get("/share/fake-token")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"], "invalid share token")
+        self.assertEqual(response.json()["detail"], "Invalid token")
 
 
 if __name__ == "__main__":

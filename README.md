@@ -28,12 +28,12 @@ Works with:
 - **Local-first by default.** Run the full stack on your own box with Docker Compose, or use Codespaces for a quick hosted demo.
 - **Safety rails built in.** Approvals, operator identity, PII scrubbing, Witness receipts, and compliance templates are all part of the product surface.
 
-## Release Highlights (v1.0.1)
+## Release Highlights (v1.0.2)
 
-- **Security hardening** for CodeQL-reported workflow permissions, path validation, URL matching, reflected output, and error exposure
-- **Auth profile archive fixes** so saved reusable profiles export and import under `AUTH_ROOT/profiles`
-- **Python client SDK repair** with packageable wheels and current action/audit REST paths
-- **Dashboard XSS hardening** with DOM text rendering, validated links, and a working active-session counter
+- **Framework security updates** with FastAPI and Starlette pinned to the current patched line
+- **Safer error boundaries** across browser actions, CDP, OCR, mesh, workflow, tunnel, social, and share-token surfaces
+- **Rate-limit hardening** with bounded buckets and hashed operator identifiers
+- **Host and path policy tightening** for production `ALLOWED_HOSTS`, auth profile paths, and upload roots
 - **1.0 platform surface** including signed mesh delegation, workflow routes, `/dashboard`, noVNC takeover, MCP transport, audit trails, and readiness checks
 
 See [CHANGELOG.md](./CHANGELOG.md) for the full release history.

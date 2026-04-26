@@ -131,7 +131,7 @@ class BaseProviderAdapter(ABC):
                         continue
                     raise ProviderAPIError(
                         provider=self.provider,
-                        message=str(exc),
+                        message="provider network request failed",
                         status_code=None,
                         retryable=True,
                     ) from exc

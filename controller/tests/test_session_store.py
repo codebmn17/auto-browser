@@ -170,6 +170,32 @@ class SessionStoreTests(unittest.IsolatedAsyncioTestCase):
         payload = await self.manager.save_storage_state(session.id, "state.json")
         self.assertIn("/session-scope/state.json", Path(payload["saved_to"]).as_posix())
 
+    async def test_session_path_helpers_reject_traversal_and_external_absolute_paths(self) -> None:
+        artifact_dir = Path(self.settings.artifact_root) / "session-paths"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        session = BrowserSession(
+            id="session-paths",
+            name="session-paths",
+            created_at=datetime.now(UTC),
+            context=FakeContext(),  # type: ignore[arg-type]
+            page=FakePage("https://example.com/paths"),  # type: ignore[arg-type]
+            artifact_dir=artifact_dir,
+            auth_dir=Path(self.settings.auth_root) / "session-paths",
+            upload_dir=Path(self.settings.upload_root) / "session-paths",
+            takeover_url="http://127.0.0.1:6080/vnc.html",
+            trace_path=artifact_dir / "trace.zip",
+        )
+        session.auth_dir.mkdir(parents=True, exist_ok=True)
+        session.upload_dir.mkdir(parents=True, exist_ok=True)
+
+        outside = Path(self.tempdir.name) / "outside.txt"
+        outside.write_text("not allowed", encoding="utf-8")
+
+        with self.assertRaises(PermissionError):
+            self.manager._safe_upload_path(str(outside), session=session)
+        with self.assertRaises(PermissionError):
+            self.manager._safe_session_auth_path(session, "../outside.json")
+
     async def test_save_auth_profile_persists_reusable_profile(self) -> None:
         artifact_dir = Path(self.settings.artifact_root) / "session-profile"
         artifact_dir.mkdir(parents=True, exist_ok=True)

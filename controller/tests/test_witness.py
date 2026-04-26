@@ -258,7 +258,7 @@ class WitnessBrowserManagerIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(receipts[0]["action"], "click")
             self.assertFalse(session.witness_remote_state.required)
             self.assertEqual(session.witness_remote_state.status, "failed")
-            self.assertEqual(session.witness_remote_state.last_error, "remote down")
+            self.assertEqual(session.witness_remote_state.last_error, "Hosted Witness delivery failed for click.")
 
     async def test_remote_forwarding_preserves_event_timestamp(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

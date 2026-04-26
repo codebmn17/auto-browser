@@ -37,10 +37,10 @@ class OCRExtractor:
                     lang=self.language,
                     output_type=Output.DICT,
                 )
-        except TesseractNotFoundError as exc:
-            return self._error_payload(image_path, f"tesseract_not_found: {exc}")
-        except Exception as exc:  # pragma: no cover - defensive
-            return self._error_payload(image_path, str(exc))
+        except TesseractNotFoundError:
+            return self._error_payload(image_path, "tesseract_not_found")
+        except Exception:  # pragma: no cover - defensive
+            return self._error_payload(image_path, "ocr_extraction_failed")
 
         blocks: list[dict[str, Any]] = []
         parts: list[str] = []

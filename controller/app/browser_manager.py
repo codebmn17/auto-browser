@@ -235,7 +235,7 @@ class BrowserManager:
             logger.warning("failed to read remote access info %s: %s", info_path, exc)
             payload["status"] = "error"
             payload["source"] = "metadata_file"
-            payload["error"] = str(exc)
+            payload["error"] = "remote_access_metadata_unreadable"
             return payload
 
         last_updated = self._parse_remote_access_timestamp(tunnel.get("updated_at"))
@@ -3043,7 +3043,7 @@ class BrowserManager:
         async with session.lock:
             try:
                 await self._ensure_witness_remote_ready(session, action="save_storage_state")
-            except PermissionError as exc:
+            except PermissionError:
                 await self._record_witness_receipt(
                     session,
                     event_type="auth_state",
@@ -3051,7 +3051,7 @@ class BrowserManager:
                     action="save_storage_state",
                     action_class="auth",
                     target={"path": path},
-                    metadata={"error": str(exc)},
+                    metadata={"error": "hosted Witness preflight failed"},
                 )
                 raise
             witness_outcome = self.witness_policy.evaluate_action(
@@ -3146,7 +3146,7 @@ class BrowserManager:
         async with session.lock:
             try:
                 await self._ensure_witness_remote_ready(session, action="save_auth_profile")
-            except PermissionError as exc:
+            except PermissionError:
                 await self._record_witness_receipt(
                     session,
                     event_type="auth_profile",
@@ -3154,7 +3154,7 @@ class BrowserManager:
                     action="save_auth_profile",
                     action_class="auth",
                     target={"profile_name": profile_name},
-                    metadata={"error": str(exc)},
+                    metadata={"error": "hosted Witness preflight failed"},
                 )
                 raise
             witness_outcome = self.witness_policy.evaluate_action(
@@ -3404,7 +3404,7 @@ class BrowserManager:
             session.tunnel_error = None
         except Exception as exc:
             session.tunnel = None
-            session.tunnel_error = str(exc)
+            session.tunnel_error = "isolated tunnel provisioning failed"
             logger.warning("failed to provision isolated tunnel for session %s: %s", session.id, exc)
 
     async def _run_action(
@@ -3463,6 +3463,7 @@ class BrowserManager:
                             details=rate_limit,
                         )
             except PermissionError as exc:
+                error_message = "Action blocked by policy"
                 try:
                     if session.page.url != before.get("url"):
                         await session.page.go_back(wait_until="domcontentloaded")
@@ -3479,7 +3480,7 @@ class BrowserManager:
                         "target": target,
                         "before": before,
                         "after": failed,
-                        "error": str(exc),
+                        "error": error_message,
                     },
                 )
                 await self.audit.append(
@@ -3487,7 +3488,7 @@ class BrowserManager:
                     status="blocked",
                     action=action_name,
                     session_id=session.id,
-                    details={"target": target, "error": str(exc)},
+                    details={"target": target, "error": error_message},
                 )
                 await self._record_witness_receipt(
                     session,
@@ -3509,10 +3510,10 @@ class BrowserManager:
                         approval_id=witness_context.get("approval_id") or target.get("approval_id"),
                         status="blocked",
                     ),
-                    metadata={"error": str(exc)},
+                    metadata={"error": error_message},
                 )
                 raise BrowserActionError(
-                    str(exc),
+                    error_message,
                     code="browser_action_blocked",
                     action=action_name,
                     status_code=403,
@@ -3566,6 +3567,7 @@ class BrowserManager:
                 exc.details.setdefault("snapshot", failed)
                 raise
             except PlaywrightError as exc:
+                error_message = "Action failed. Refresh observation and retry."
                 failed = await self._light_snapshot(session, label=f"failed-{action_name}")
                 await self._append_jsonl(
                     session.artifact_dir / "actions.jsonl",
@@ -3576,7 +3578,7 @@ class BrowserManager:
                         "target": target,
                         "before": before,
                         "after": failed,
-                        "error": str(exc),
+                        "error": error_message,
                     },
                 )
                 await self.audit.append(
@@ -3584,7 +3586,7 @@ class BrowserManager:
                     status="failed",
                     action=action_name,
                     session_id=session.id,
-                    details={"target": target, "error": str(exc)},
+                    details={"target": target, "error": error_message},
                 )
                 await self._record_witness_receipt(
                     session,
@@ -3606,16 +3608,16 @@ class BrowserManager:
                         approval_id=witness_context.get("approval_id") or target.get("approval_id"),
                         status="failed",
                     ),
-                    metadata={"error": str(exc)},
+                    metadata={"error": error_message},
                 )
                 raise BrowserActionError(
-                    f"Action failed for {action_name}. Refresh observation and retry.",
+                    error_message,
                     code="browser_action_failed",
                     action=action_name,
                     status_code=400,
                     retryable=True,
                     url=session.page.url,
-                    details={"snapshot": failed, "details": str(exc)},
+                    details={"snapshot": failed},
                 ) from exc
             after = await self._observation_payload(session, limit=20, screenshot_label=f"after-{action_name}")
             session.last_action = action_name
@@ -3879,7 +3881,7 @@ class BrowserManager:
                 "focused": None,
                 "role_counts": {},
                 "nodes": [],
-                "error": str(exc),
+                "error": "accessibility_snapshot_unavailable",
             }
 
         if not snapshot:
@@ -4002,7 +4004,7 @@ class BrowserManager:
             session.witness_remote_state.status = "failed"
             session.witness_remote_state.last_checked_at = checked_at
             session.witness_remote_state.last_error = (
-                f"Hosted Witness preflight failed before {action}: {exc}"
+                f"Hosted Witness preflight failed before {action}."
             )
             raise PermissionError(session.witness_remote_state.last_error) from exc
         session.witness_remote_state.status = "healthy"
@@ -4079,7 +4081,7 @@ class BrowserManager:
         except Exception as exc:
             session.witness_remote_state.status = "failed"
             session.witness_remote_state.last_attempted_at = attempted_at
-            session.witness_remote_state.last_error = str(exc)
+            session.witness_remote_state.last_error = f"Hosted Witness delivery failed for {action}."
             logger.warning(
                 "witness remote delivery failed for session %s action %s: %s",
                 session.id,
@@ -4363,19 +4365,17 @@ class BrowserManager:
 
     @staticmethod
     def _resolve_contained_path(root: Path, candidate_path: str | Path, *, allow_absolute: bool = False) -> Path:
-        root_str = os.path.realpath(os.fspath(root))
+        root_str = os.path.normcase(os.path.realpath(os.fspath(root)))
         raw_path = os.fspath(candidate_path)
         if os.path.isabs(raw_path):
             if not allow_absolute:
                 raise PermissionError("path must be relative")
-            candidate_str = os.path.realpath(raw_path)
+            candidate_str = os.path.normcase(os.path.realpath(raw_path))
         else:
-            candidate_str = os.path.realpath(os.path.join(root_str, raw_path))
+            candidate_str = os.path.normcase(os.path.realpath(os.path.join(root_str, raw_path)))
 
-        root_norm = os.path.normcase(root_str)
-        candidate_norm = os.path.normcase(candidate_str)
-        root_prefix = root_norm if root_norm.endswith(os.sep) else root_norm + os.sep
-        if candidate_norm != root_norm and not candidate_norm.startswith(root_prefix):
+        root_prefix = root_str if root_str.endswith(os.sep) else root_str + os.sep
+        if candidate_str != root_str and not candidate_str.startswith(root_prefix):
             raise PermissionError("path must stay inside the configured root")
         return Path(candidate_str)
 
@@ -4526,17 +4526,23 @@ class BrowserManager:
 
     def _safe_upload_path(self, file_path: str, *, session: BrowserSession | None = None) -> Path:
         root = Path(self.settings.upload_root).resolve()
+        allowed_roots = [root]
+        if session is not None:
+            allowed_roots.append(session.upload_dir.resolve())
+
         if os.path.isabs(file_path):
-            candidate = Path(os.path.realpath(file_path))
-            allowed_roots = [root]
-            if session is not None:
-                allowed_roots.append(session.upload_dir.resolve())
+            for allowed_root in allowed_roots:
+                try:
+                    candidate = self._resolve_contained_path(allowed_root, file_path, allow_absolute=True)
+                    break
+                except PermissionError:
+                    continue
+            else:
+                raise PermissionError("file_path must stay inside upload root")
         else:
-            allowed_roots = [root]
             preferred_roots: list[Path] = []
             if session is not None:
                 preferred_roots.append(session.upload_dir.resolve())
-                allowed_roots.append(session.upload_dir.resolve())
             preferred_roots.append(root)
 
             for candidate_root in preferred_roots:
@@ -4637,8 +4643,8 @@ class BrowserManager:
             await download.save_as(str(destination))
             if hasattr(download, "failure"):
                 failure = await download.failure()
-        except Exception as exc:
-            failure = str(exc)
+        except Exception:
+            failure = "download_save_failed"
             status = "failed"
 
         if failure:
@@ -4771,7 +4777,7 @@ class BrowserManager:
         except Exception as exc:
             logger.warning("screenshot diff failed: %s", exc)
             return {
-                "error": str(exc),
+                "error": "screenshot_diff_failed",
                 "changed_pixels": -1,
                 "changed_pct": -1.0,
                 "diff_url": None,

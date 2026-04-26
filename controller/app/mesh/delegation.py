@@ -236,7 +236,7 @@ class DelegationManager:
             return DelegationResponse(
                 request_id=request.request_id,
                 status="rejected",
-                error=str(exc),
+                error="Delegation policy rejected the request",
             )
 
         # Update peer last_seen
@@ -259,12 +259,12 @@ class DelegationManager:
             )
             try:
                 approval_result = await self._approval_fn(approval_id, request.model_dump())
-            except Exception as exc:
+            except Exception:
                 return DelegationResponse(
                     request_id=request.request_id,
                     status="approval_required",
                     approval_id=approval_id,
-                    error=str(exc),
+                    error="Delegation approval failed",
                 )
             # Inspect approval outcome: any status != "approved" blocks routing.
             # Convention: approval_fn returns {"status": "approved"|"denied"|...} dict.

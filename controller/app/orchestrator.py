@@ -77,6 +77,7 @@ class BrowserOrchestrator:
                 error_code = exc.response.status_code
             else:
                 error_code = None
+            error_message = "Provider request failed" if error_code else "Agent step failed"
             result = AgentStepResult(
                 provider=provider_name,
                 model=model_name,
@@ -87,7 +88,7 @@ class BrowserOrchestrator:
                 execution=None,
                 usage=None,
                 raw_text=None,
-                error=str(exc),
+                error=error_message,
                 error_code=error_code,
             )
 
