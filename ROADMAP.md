@@ -2,7 +2,7 @@
 
 This is the near-term direction for Auto Browser.
 
-## Now (current in v1.0.1)
+## Now (current in v1.0.2)
 
 - stable local-first browser control
 - reusable auth profiles + import/export
