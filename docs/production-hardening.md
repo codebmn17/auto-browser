@@ -11,6 +11,7 @@ Ship Auto Browser as a safe **single-tenant private beta** first, then harden to
   - `REQUIRE_OPERATOR_ID=true`
   - `AUTH_STATE_ENCRYPTION_KEY`
   - `REQUIRE_AUTH_STATE_ENCRYPTION=true`
+  - `CONTROLLER_ALLOWED_HOSTS` configured for the controller ingress hostnames
   - request rate limiting enabled
 - Request-rate limiting with 429 responses and reset headers
 - Metrics endpoint for scraping and alert wiring

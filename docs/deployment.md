@@ -21,6 +21,7 @@ AUTH_STATE_ENCRYPTION_KEY=<44-char-fernet-key>
 REQUIRE_AUTH_STATE_ENCRYPTION=true
 REQUEST_RATE_LIMIT_ENABLED=true
 METRICS_ENABLED=true
+CONTROLLER_ALLOWED_HOSTS=<controller-ingress-hosts>
 ```
 
 Strongly recommended:
@@ -34,6 +35,11 @@ ARTIFACT_RETENTION_HOURS=168
 UPLOAD_RETENTION_HOURS=168
 AUTH_RETENTION_HOURS=168
 ```
+
+`CONTROLLER_ALLOWED_HOSTS` protects the controller itself from unexpected HTTP Host headers.
+Keep `ALLOWED_HOSTS` for browser navigation targets, and set `CONTROLLER_ALLOWED_HOSTS`
+to the hostnames operators use to reach the controller, such as `browser.example.com`
+or `localhost,127.0.0.1,::1` for a local-only install.
 
 ## Auth profiles
 

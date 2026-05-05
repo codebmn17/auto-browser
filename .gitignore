@@ -35,4 +35,14 @@ data/cli-home/*
 !data/cli-home/.gitkeep
 __pycache__/
 *.pyc
-controller/*.egg-info/
+.venv*/
+.pytest_cache/
+.pytest-cache*/
+.pytest-tmp*/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/

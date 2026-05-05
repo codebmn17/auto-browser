@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import StreamingResponse
 
 from . import events as _events
@@ -158,6 +159,11 @@ mcp_transport = McpHttpTransport(
 )
 
 
+def _install_controller_host_middleware(application: FastAPI, allowed_hosts: list[str]) -> None:
+    if allowed_hosts:
+        application.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if _compliance_template and _compliance_overrides is not None:
@@ -197,6 +203,7 @@ app = FastAPI(
     lifespan=lifespan,
     summary="Visual Auto Browser control plane for LLM workflows.",
 )
+_install_controller_host_middleware(app, settings.controller_allowed_host_patterns)
 
 app.state.browser_manager = manager
 app.state.tool_gateway = tool_gateway

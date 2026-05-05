@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 _TEST_ROOT = Path(tempfile.mkdtemp(prefix="auto-browser-main-auth-"))
@@ -101,3 +102,19 @@ class MainAuthTests(unittest.TestCase):
             response = self.client.post("/mesh/receive", json=body)
 
         self.assertEqual(response.status_code, 503)
+
+    def test_controller_allowed_hosts_rejects_unexpected_host_headers(self) -> None:
+        app = FastAPI()
+
+        @app.get("/")
+        async def root() -> dict[str, bool]:
+            return {"ok": True}
+
+        main_module._install_controller_host_middleware(app, ["controller.example.com"])
+
+        with TestClient(app) as client:
+            allowed = client.get("/", headers={"host": "controller.example.com"})
+            rejected = client.get("/", headers={"host": "evil.example.com"})
+
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(rejected.status_code, 400)

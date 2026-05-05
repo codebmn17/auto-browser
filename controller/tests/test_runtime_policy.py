@@ -82,6 +82,7 @@ class RuntimePolicyTests(unittest.TestCase):
             AUTH_STATE_ENCRYPTION_KEY="b" * 44,
             REQUIRE_AUTH_STATE_ENCRYPTION="true",
             ALLOWED_HOSTS="example.com",
+            CONTROLLER_ALLOWED_HOSTS="controller.example.com",
             SESSION_ISOLATION_MODE="shared_browser_node",
             TAKEOVER_URL="http://127.0.0.1:6080/vnc.html",
             ISOLATED_TUNNEL_ENABLED="false",
@@ -96,6 +97,22 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertTrue(any("docker_ephemeral" in warning for warning in report.warnings))
         self.assertTrue(any("TAKEOVER_URL" in warning for warning in report.warnings))
         self.assertTrue(any("METRICS_ENABLED" in warning for warning in report.warnings))
+
+    def test_production_warns_when_controller_host_filter_is_unset(self) -> None:
+        settings = Settings(
+            _env_file=None,
+            APP_ENV="production",
+            API_BEARER_TOKEN="secret",
+            REQUIRE_OPERATOR_ID="true",
+            AUTH_STATE_ENCRYPTION_KEY="b" * 44,
+            REQUIRE_AUTH_STATE_ENCRYPTION="true",
+            ALLOWED_HOSTS="example.com",
+        )
+
+        report = validate_runtime_policy(settings)
+
+        self.assertTrue(report.ok)
+        self.assertTrue(any("CONTROLLER_ALLOWED_HOSTS is unset" in warning for warning in report.warnings))
 
     def test_confidential_default_emits_hardening_warnings(self) -> None:
         settings = Settings(

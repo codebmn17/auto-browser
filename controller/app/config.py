@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     operator_name_header: str = Field("X-Operator-Name", alias="OPERATOR_NAME_HEADER")
     require_operator_id: bool = Field(False, alias="REQUIRE_OPERATOR_ID")
     mcp_allowed_origins: str = Field("", alias="MCP_ALLOWED_ORIGINS")
+    controller_allowed_hosts: str = Field("", alias="CONTROLLER_ALLOWED_HOSTS")
     mcp_tool_profile: str = Field("curated", alias="MCP_TOOL_PROFILE")
     metrics_enabled: bool = Field(True, alias="METRICS_ENABLED")
     session_isolation_mode: str = Field("shared_browser_node", alias="SESSION_ISOLATION_MODE")
@@ -304,6 +305,10 @@ class Settings(BaseSettings):
     @property
     def mcp_allowed_origin_list(self) -> list[str]:
         return [item.strip() for item in self.mcp_allowed_origins.split(",") if item.strip()]
+
+    @property
+    def controller_allowed_host_patterns(self) -> list[str]:
+        return [item.strip() for item in self.controller_allowed_hosts.split(",") if item.strip()]
 
     @property
     def request_rate_limit_exempt_path_list(self) -> list[str]:
