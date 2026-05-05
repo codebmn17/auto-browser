@@ -28,6 +28,7 @@ except Exception:  # pragma: no cover - graceful fallback for non-login test run
 from . import events as _events
 from .action_errors import BrowserActionError
 from .approvals import ApprovalRequiredError, ApprovalStore
+from .artifacts import SessionArtifactService
 from .audit import AuditStore, get_current_operator
 from .auth_state import AuthStateManager
 from .browser_scripts import (
@@ -47,6 +48,7 @@ from .browser_scripts import (
     apply_stealth,
 )
 from .config import Settings
+from .downloads import DownloadCaptureService
 from .memory_manager import MemoryManager
 from .models import (
     ApprovalKind,
@@ -160,6 +162,8 @@ class BrowserManager:
             db_path=self.settings.state_db_path,
             max_events=self.settings.audit_max_events,
         )
+        self.artifacts = SessionArtifactService(self.settings.artifact_root)
+        self.download_capture = DownloadCaptureService(self.artifacts)
         self.session_store = DurableSessionStore(
             file_root=self.settings.session_store_root,
             redis_url=self.settings.redis_url,
@@ -718,9 +722,7 @@ class BrowserManager:
             raise RuntimeError(message)
 
     def _prepare_session_dirs(self, session_id: str) -> tuple[Path, Path, Path]:
-        artifact_dir = Path(self.settings.artifact_root) / session_id
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        (artifact_dir / "downloads").mkdir(parents=True, exist_ok=True)
+        artifact_dir = self.artifacts.prepare_session_dir(session_id)
         auth_dir = self._session_auth_root(session_id)
         upload_dir = self._session_upload_root(session_id)
         auth_dir.mkdir(parents=True, exist_ok=True)
@@ -3833,18 +3835,10 @@ class BrowserManager:
         }
 
     async def _capture_screenshot(self, session: BrowserSession, label: str) -> dict[str, str]:
-        filename = f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%f')}Z-{label}.png"
-        path = session.artifact_dir / filename
-        await session.page.screenshot(path=str(path), full_page=False)
-        return {"path": str(path), "url": f"/artifacts/{session.id}/{filename}"}
+        return await self.artifacts.capture_screenshot(session, label)
 
     def _trace_payload(self, session: BrowserSession) -> dict[str, Any]:
-        return {
-            "trace_path": str(session.trace_path),
-            "trace_url": f"/artifacts/{session.id}/{session.trace_path.name}",
-            "trace_exists": session.trace_path.exists(),
-            "trace_recording": session.trace_recording,
-        }
+        return self.artifacts.trace_payload(session)
 
     async def _stop_trace_recording(self, session: BrowserSession) -> None:
         if not self.settings.enable_tracing or not session.trace_recording:
@@ -4656,43 +4650,13 @@ class BrowserManager:
             del items[: len(items) - limit]
 
     async def _handle_download(self, session: BrowserSession, download: Any) -> None:
-        suggested = Path(str(getattr(download, "suggested_filename", "") or f"download-{uuid4().hex}")).name
-        destination = session.artifact_dir / "downloads" / suggested
-        if destination.exists():
-            destination = destination.with_name(f"{destination.stem}-{uuid4().hex[:8]}{destination.suffix}")
-
-        failure: str | None = None
-        status = "completed"
-        try:
-            await download.save_as(str(destination))
-            if hasattr(download, "failure"):
-                failure = await download.failure()
-        except Exception:
-            failure = "download_save_failed"
-            status = "failed"
-
-        if failure:
-            status = "failed"
-
-        record = {
-            "id": uuid4().hex[:12],
-            "timestamp": utc_now(),
-            "status": status,
-            "filename": destination.name,
-            "suggested_filename": suggested,
-            "path": str(destination),
-            "url": f"/artifacts/{session.id}/downloads/{destination.name}",
-            "source_url": getattr(download, "url", None),
-            "failure": failure,
-        }
-        self._bounded_append(session.downloads, record, limit=100)
-        await self._append_jsonl(session.artifact_dir / "downloads.jsonl", record)
+        record = await self.download_capture.capture(session, download)
         await self.audit.append(
             event_type="download_captured",
-            status=status,
+            status=record["status"],
             action="download",
             session_id=session.id,
-            details={"filename": record["filename"], "url": record["url"], "failure": failure},
+            details={"filename": record["filename"], "url": record["url"], "failure": record["failure"]},
         )
         if session.id in self.sessions:
             try:
@@ -4701,14 +4665,11 @@ class BrowserManager:
                 logger.warning("failed to persist download metadata for session %s: %s", session.id, exc)
 
     async def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(payload, ensure_ascii=False)
-        await asyncio.to_thread(self._append_text, path, line + "\n")
+        await self.artifacts.append_jsonl(path, payload)
 
     @staticmethod
     def _append_text(path: Path, text: str) -> None:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(text)
+        SessionArtifactService.append_text(path, text)
 
     # ── Screenshot diff ──────────────────────────────────────────────────────
 

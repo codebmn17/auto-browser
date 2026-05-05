@@ -30,6 +30,7 @@ from .maintenance import MaintenanceService
 from .mcp_transport import McpHttpTransport
 from .metrics import MetricsRecorder
 from .models import (
+    AgentResumeRequest,
     AgentRunRequest,
     AgentStepRequest,
     ApprovalDecisionRequest,
@@ -81,7 +82,7 @@ _log_level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), loggi
 logging.basicConfig(level=_log_level)
 logger = logging.getLogger(__name__)
 
-_VERSION = "1.0.2"
+_VERSION = "1.0.3"
 
 _SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -1025,6 +1026,7 @@ async def run_agent_step(session_id: str, payload: AgentStepRequest) -> dict:
             upload_approved=payload.upload_approved,
             approval_id=payload.approval_id,
             provider_model=payload.provider_model,
+            workflow_profile=payload.workflow_profile,
         )
         status_code = 200 if result.status != "error" else (result.error_code or 502)
         if status_code != 200:
@@ -1055,6 +1057,7 @@ async def run_agent_loop(session_id: str, payload: AgentRunRequest) -> dict:
             upload_approved=payload.upload_approved,
             approval_id=payload.approval_id,
             provider_model=payload.provider_model,
+            workflow_profile=payload.workflow_profile,
         )
         return result.model_dump()
     except KeyError:
@@ -1067,6 +1070,39 @@ async def run_agent_loop(session_id: str, payload: AgentRunRequest) -> dict:
 async def enqueue_agent_run(session_id: str, payload: AgentRunRequest) -> dict:
     await manager.get_session(session_id)
     return await job_queue.enqueue_run(session_id, payload)
+
+
+@app.post("/agent/jobs/{job_id}/resume", status_code=202)
+async def resume_agent_job(job_id: str, payload: AgentResumeRequest | None = None) -> dict:
+    request = payload or AgentResumeRequest()
+    try:
+        return await job_queue.resume_job(job_id, max_steps=request.max_steps)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown job") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Service unavailable") from None
+
+
+@app.post("/agent/jobs/{job_id}/discard")
+async def discard_agent_job(job_id: str) -> dict:
+    try:
+        return await job_queue.discard_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown job") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.post("/agent/jobs/{job_id}/cancel", status_code=202)
+async def cancel_agent_job(job_id: str) -> dict:
+    try:
+        return await job_queue.cancel_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown job") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @app.get("/mcp")

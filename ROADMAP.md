@@ -2,7 +2,7 @@
 
 This is the near-term direction for Auto Browser.
 
-## Now (current in v1.0.2)
+## Now (current in v1.0.3)
 
 - stable local-first browser control
 - reusable auth profiles + import/export
@@ -22,10 +22,11 @@ This is the near-term direction for Auto Browser.
 - Cron + webhook triggers — autonomous scheduled jobs
 - MCP Resources Protocol — live browser state as subscribable resources
 - Operator dashboard at `/dashboard` with SSE event stream
+- Durable background-agent checkpoints with dashboard resume/discard/cancel controls
+- Repeatable agent eval harness for provider and workflow-profile comparisons
 
 ## Next
 
-- better session recovery and resume flows (crash-tolerant agents)
 - cleaner multi-tab / popup management
 - MCP `resources/subscribe` push notifications (live browser state streaming)
 - stronger trace viewer integration in operator dashboard
@@ -35,6 +36,9 @@ This is the near-term direction for Auto Browser.
 ## Recently Shipped
 
 - v1.0.1 security hardening, auth-profile archive fixes, client SDK repair, and dashboard XSS cleanup
+- v1.0.3 resumable/cancellable agent workflows, operator job controls, eval reporting, and artifact/download service cleanup
+- Durable background-agent checkpoints with REST/MCP resume support
+- Request-level `fast` and `governed` workflow profiles for agent runs
 - Agent memory profiles for cross-session context persistence
 - Deployment readiness advisor with compliance mode checks
 - Compliance templates (HIPAA, SOC2, GDPR, PCI-DSS) via a single env var

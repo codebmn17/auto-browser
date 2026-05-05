@@ -83,7 +83,15 @@ class McpTransportTests(unittest.TestCase):
         session_id = response.headers[MCP_SESSION_HEADER]
         protocol_version = response.headers[MCP_PROTOCOL_HEADER]
         self.assertEqual(protocol_version, "2025-11-25")
-        self.assertEqual(response.json()["result"]["serverInfo"]["name"], "auto-browser")
+        result = response.json()["result"]
+        self.assertEqual(result["serverInfo"]["name"], "auto-browser")
+        self.assertEqual(
+            result["capabilities"]["experimental"]["autoBrowser"]["workflowProfiles"],
+            ["fast", "governed"],
+        )
+        self.assertTrue(result["capabilities"]["experimental"]["autoBrowser"]["resumableAgentJobs"])
+        self.assertTrue(result["capabilities"]["experimental"]["autoBrowser"]["discardableAgentJobs"])
+        self.assertTrue(result["capabilities"]["experimental"]["autoBrowser"]["cancellableAgentJobs"])
         return session_id, protocol_version
 
     def test_initialize_requires_initialized_notification_before_tool_calls(self) -> None:
