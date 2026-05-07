@@ -215,6 +215,12 @@ class BrowserOrchestrator:
             "go_forward",
             "upload",
         }:
+            if workflow_profile == "governed":
+                await self.manager.require_governed_approval(
+                    session_id,
+                    decision,
+                    approval_id=approval_id,
+                )
             execution = await self.manager.execute_decision(
                 session_id,
                 decision,

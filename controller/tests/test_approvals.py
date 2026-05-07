@@ -129,6 +129,34 @@ class ApprovalQueueTests(unittest.IsolatedAsyncioTestCase):
             y=None,
         )
 
+    async def test_governed_write_decision_requires_write_approval(self) -> None:
+        decision = BrowserActionDecision(
+            action="click",
+            reason="Click the save button",
+            element_id="op-save",
+            risk_category="write",
+        )
+
+        with self.assertRaises(ApprovalRequiredError) as ctx:
+            await self.manager.require_governed_approval(
+                self.session.id,
+                decision,
+                approval_id=None,
+            )
+
+        approval = ctx.exception.approval
+        self.assertEqual(approval.kind, "write")
+        self.assertEqual(approval.action.action, "click")
+        await self.manager.approve(approval.id, comment="operator approved")
+
+        approved = await self.manager.require_governed_approval(
+            self.session.id,
+            decision,
+            approval_id=approval.id,
+        )
+
+        self.assertEqual(approved.id, approval.id)
+
     async def test_social_post_requires_pending_approval(self) -> None:
         self.session.page = FakeSocialPage()  # type: ignore[assignment]
         self.manager._run_action = AsyncMock(return_value={"action": "social_post"})  # type: ignore[method-assign]

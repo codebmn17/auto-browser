@@ -899,6 +899,11 @@ def register_all_routers(app) -> None:
     app.include_router(network_router)
     app.include_router(cdp_router)
     app.include_router(workflow_router)
-    app.include_router(social_router)
+    settings = getattr(app.state, "settings", None)
+    if getattr(settings, "experimental_social", False):
+        app.include_router(social_router)
     app.include_router(dashboard_router)
-    logger.info("routes.extensions: all 1.0 routers registered")
+    logger.info(
+        "routes.extensions: 1.0 routers registered experimental_social=%s",
+        bool(getattr(settings, "experimental_social", False)),
+    )

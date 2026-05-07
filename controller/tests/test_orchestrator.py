@@ -6,7 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from app.models import BrowserActionDecision
+from app.approvals import ApprovalRequiredError
+from app.models import ApprovalRecord, BrowserActionDecision
 from app.orchestrator import BrowserOrchestrator
 from app.providers.base import ProviderDecision
 
@@ -61,6 +62,7 @@ class BrowserOrchestratorLoopGuardTests(unittest.IsolatedAsyncioTestCase):
                     "verification": {"verified": False, "signals": []},
                 }
             ),
+            require_governed_approval=AsyncMock(return_value=None),
             request_human_takeover=AsyncMock(return_value={"takeover_url": "http://127.0.0.1:6080/vnc.html"}),
             get_session=AsyncMock(return_value=self.session),
             get_session_summary=AsyncMock(return_value={"id": "session-1", "status": "active"}),
@@ -157,6 +159,51 @@ class BrowserOrchestratorLoopGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Stay on the current account.", adapter.last_context_hints)
         self.assertIn("Workflow profile: governed", adapter.last_context_hints)
         self.assertIn("request human takeover", adapter.last_context_hints)
+
+    async def test_governed_workflow_profile_blocks_write_without_approval(self) -> None:
+        approval = ApprovalRecord(
+            id="approval-governed-1",
+            session_id="session-1",
+            kind="write",
+            status="pending",
+            created_at="2026-05-06T00:00:00Z",
+            updated_at="2026-05-06T00:00:00Z",
+            reason="Governed workflow requires operator approval.",
+            action=BrowserActionDecision(
+                action="click",
+                reason="Click the account update button",
+                element_id="op-save",
+                risk_category="write",
+            ),
+        )
+        self.manager.require_governed_approval = AsyncMock(side_effect=ApprovalRequiredError(approval))
+        orchestrator = BrowserOrchestrator(self.manager, StaticRegistry(RepeatingAdapter()))
+
+        result = await orchestrator.step(
+            session_id="session-1",
+            provider_name="openai",
+            goal="Update the account page",
+            workflow_profile="governed",
+        )
+
+        self.assertEqual(result.status, "approval_required")
+        self.assertEqual(result.execution["approval"]["kind"], "write")
+        self.manager.require_governed_approval.assert_awaited_once()
+        self.manager.execute_decision.assert_not_awaited()
+
+    async def test_fast_workflow_profile_executes_write_without_governed_gate(self) -> None:
+        orchestrator = BrowserOrchestrator(self.manager, StaticRegistry(RepeatingAdapter()))
+
+        result = await orchestrator.step(
+            session_id="session-1",
+            provider_name="openai",
+            goal="Click the button",
+            workflow_profile="fast",
+        )
+
+        self.assertEqual(result.status, "acted")
+        self.manager.require_governed_approval.assert_not_awaited()
+        self.manager.execute_decision.assert_awaited_once()
 
 
 if __name__ == "__main__":

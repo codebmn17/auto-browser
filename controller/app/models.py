@@ -294,7 +294,7 @@ RiskCategory = Literal[
     "account_change",
     "destructive",
 ]
-ApprovalKind = Literal["upload", "post", "payment", "account_change", "destructive"]
+ApprovalKind = Literal["write", "upload", "post", "payment", "account_change", "destructive"]
 ApprovalStatus = Literal["pending", "approved", "rejected", "executed"]
 SessionStatus = Literal["active", "closed", "interrupted", "failed"]
 AgentJobKind = Literal["agent_step", "agent_run"]
@@ -409,7 +409,10 @@ class AgentStepRequest(StrictInputModel):
     provider_model: str | None = None
     workflow_profile: WorkflowProfile = Field(
         default="fast",
-        description="fast preserves direct execution; governed adds conservative review guidance and richer audit context.",
+        description=(
+            "fast preserves direct execution; governed requires approval before write-sensitive "
+            "agent actions and adds conservative review guidance plus richer audit context."
+        ),
     )
     observation_limit: int = Field(default=40, ge=1, le=100)
     context_hints: str | None = Field(default=None, max_length=4000)

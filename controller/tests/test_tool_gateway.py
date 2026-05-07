@@ -74,6 +74,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
                 allowed_hosts="*",
                 pii_scrub_enabled=True,
                 require_approval_for_uploads=True,
+                experimental_social=False,
             ),
             memory=SimpleNamespace(
                 save=AsyncMock(
@@ -125,6 +126,14 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             job_queue=self.job_queue,
             vision_targeter=object(),
         )
+        self.manager.settings.experimental_social = True
+        self.social_full_gateway = McpToolGateway(
+            manager=self.manager,
+            orchestrator=self.orchestrator,
+            job_queue=self.job_queue,
+            tool_profile="full",
+        )
+        self.manager.settings.experimental_social = False
 
     async def test_list_tools_includes_expected_browser_tools(self) -> None:
         tools = self.gateway.list_tools()
@@ -158,8 +167,8 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("social.unfollow", names)
         self.assertNotIn("social.repost", names)
         self.assertNotIn("social.dm", names)
-        self.assertIn("social.login", names)
-        self.assertIn("social.search", names)
+        self.assertNotIn("social.login", names)
+        self.assertNotIn("social.search", names)
         self.assertNotIn("browser.find_by_vision", names)
         self.assertEqual(len(names), len(tools))
         self.assertNotIn("browser.discard_agent_job", names)
@@ -176,9 +185,29 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("browser.delete_memory_profile", names)
         self.assertIn("browser.readiness_check", names)
         self.assertIn("browser.list_approvals", names)
+        self.assertNotIn("social.post", names)
+        self.assertNotIn("social.dm", names)
+        self.assertNotIn("browser.find_by_vision", names)
+
+    async def test_experimental_social_full_profile_exposes_social_tools(self) -> None:
+        names = {tool["name"] for tool in self.social_full_gateway.list_tools()}
+
         self.assertIn("social.post", names)
         self.assertIn("social.dm", names)
+        self.assertIn("social.login", names)
+        self.assertIn("social.search", names)
         self.assertNotIn("browser.find_by_vision", names)
+
+    async def test_social_tools_are_unknown_when_experiment_disabled(self) -> None:
+        response = await self.full_gateway.call_tool(
+            McpToolCallRequest(
+                name="social.post",
+                arguments={"session_id": "session-1", "text": "hello world"},
+            )
+        )
+
+        self.assertTrue(response.isError)
+        self.assertIn("Unknown tool: social.post", response.structuredContent["error"])
 
     async def test_resume_agent_job_tool_forwards_arguments(self) -> None:
         response = await self.full_gateway.call_tool(
@@ -256,7 +285,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.manager.memory.delete.assert_awaited_once_with("checkout")
 
     async def test_execute_action_tool_returns_structured_payload(self) -> None:
-        response = await self.gateway.call_tool(
+        response = await self.social_full_gateway.call_tool(
             McpToolCallRequest(
                 name="browser.execute_action",
                 arguments={
@@ -484,7 +513,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         )
         self.manager.post_content = AsyncMock(side_effect=ApprovalRequiredError(approval))
 
-        response = await self.full_gateway.call_tool(
+        response = await self.social_full_gateway.call_tool(
             McpToolCallRequest(
                 name="social.post",
                 arguments={
@@ -529,7 +558,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_social_post_tool_forwards_approval_id(self) -> None:
-        response = await self.full_gateway.call_tool(
+        response = await self.social_full_gateway.call_tool(
             McpToolCallRequest(
                 name="social.post",
                 arguments={
@@ -548,7 +577,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_social_comment_tool_forwards_fields(self) -> None:
-        response = await self.full_gateway.call_tool(
+        response = await self.social_full_gateway.call_tool(
             McpToolCallRequest(
                 name="social.comment",
                 arguments={
@@ -569,7 +598,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_social_login_tool_forwards_credentials_and_approval(self) -> None:
-        response = await self.gateway.call_tool(
+        response = await self.social_full_gateway.call_tool(
             McpToolCallRequest(
                 name="social.login",
                 arguments={
@@ -607,7 +636,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        response = await self.gateway.call_tool(
+        response = await self.social_full_gateway.call_tool(
             McpToolCallRequest(
                 name="social.login",
                 arguments={

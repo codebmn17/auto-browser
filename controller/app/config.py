@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     mcp_allowed_origins: str = Field("", alias="MCP_ALLOWED_ORIGINS")
     controller_allowed_hosts: str = Field("", alias="CONTROLLER_ALLOWED_HOSTS")
     mcp_tool_profile: str = Field("curated", alias="MCP_TOOL_PROFILE")
+    experimental_social: bool = Field(False, alias="EXPERIMENTAL_SOCIAL")
     metrics_enabled: bool = Field(True, alias="METRICS_ENABLED")
     session_isolation_mode: str = Field("shared_browser_node", alias="SESSION_ISOLATION_MODE")
     isolated_browser_image: str = Field(
@@ -232,7 +233,7 @@ class Settings(BaseSettings):
     human_typing_max_delay_ms: int = Field(130, alias="HUMAN_TYPING_MAX_DELAY_MS")
 
     # Stealth / anti-bot
-    stealth_enabled: bool = Field(True, alias="STEALTH_ENABLED")
+    stealth_enabled: bool = Field(False, alias="STEALTH_ENABLED")
     user_agent_pool: str = Field(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36,"
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36,"

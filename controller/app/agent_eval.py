@@ -20,6 +20,7 @@ class AgentEvalCase:
     expected_statuses: tuple[str, ...] = ("done",)
     expect_url_contains: tuple[str, ...] = ()
     expect_actions: tuple[str, ...] = ()
+    expected_status_by_profile: dict[str, str] | None = None
     min_step_count: int | None = None
     max_step_count: int | None = None
 
@@ -36,6 +37,7 @@ class AgentEvalCase:
             expected_statuses=_string_tuple(payload.get("expected_statuses") or ("done",)),
             expect_url_contains=_string_tuple(payload.get("expect_url_contains") or ()),
             expect_actions=_string_tuple(payload.get("expect_actions") or ()),
+            expected_status_by_profile=_string_map(payload.get("expected_status_by_profile")),
             min_step_count=_optional_int(payload.get("min_step_count")),
             max_step_count=_optional_int(payload.get("max_step_count")),
         )
@@ -114,12 +116,13 @@ def build_matrix(
 def score_result(spec: AgentEvalSpec, result: dict[str, Any]) -> AgentEvalScore:
     criteria: list[EvalCriterion] = []
     status = str(result.get("status") or "")
-    if spec.case.expected_statuses:
+    expected_statuses = _expected_statuses_for_spec(spec)
+    if expected_statuses:
         criteria.append(
             EvalCriterion(
                 name="status",
-                passed=status in spec.case.expected_statuses,
-                detail=f"expected {', '.join(spec.case.expected_statuses)}; got {status or 'missing'}",
+                passed=status in expected_statuses,
+                detail=f"expected {', '.join(expected_statuses)}; got {status or 'missing'}",
             )
         )
 
@@ -209,6 +212,53 @@ def plan_payload(specs: list[AgentEvalSpec]) -> dict[str, Any]:
             }
             for spec in specs
         ],
+    }
+
+
+def mock_result_for_spec(spec: AgentEvalSpec) -> dict[str, Any]:
+    """Return a deterministic result payload that exercises eval scoring criteria."""
+    expected_statuses = _expected_statuses_for_spec(spec)
+    status = expected_statuses[0] if expected_statuses else "done"
+    url = spec.case.start_url or _mock_url_for_case(spec.case)
+    actions = list(spec.case.expect_actions) or (["done"] if status == "done" else ["wait"])
+    min_steps = spec.case.min_step_count or 1
+    steps: list[dict[str, Any]] = []
+    while len(steps) < max(min_steps, len(actions)):
+        action = actions[len(steps)] if len(steps) < len(actions) else actions[-1]
+        step_status = "approval_required" if status == "approval_required" and len(steps) == 0 else "acted"
+        steps.append(
+            {
+                "status": step_status,
+                "workflow_profile": spec.workflow_profile,
+                "decision": {
+                    "action": action,
+                    "reason": "Mock eval result",
+                    "risk_category": "write" if status == "approval_required" else "read",
+                },
+                "observation": {"url": url, "title": spec.case.name},
+                "execution": (
+                    {"status": "approval_required", "approval": {"kind": "write"}}
+                    if step_status == "approval_required"
+                    else {"after": {"url": url, "title": spec.case.name}}
+                ),
+            }
+        )
+    if status == "done" and "done" not in {step["decision"]["action"] for step in steps}:
+        steps.append(
+            {
+                "status": "done",
+                "workflow_profile": spec.workflow_profile,
+                "decision": {"action": "done", "reason": "Mock eval complete", "risk_category": "read"},
+                "observation": {"url": url, "title": spec.case.name},
+                "execution": None,
+            }
+        )
+    return {
+        "status": status,
+        "provider": spec.provider,
+        "workflow_profile": spec.workflow_profile,
+        "steps": steps,
+        "final_session": {"current_url": url, "status": "active"},
     }
 
 
@@ -323,6 +373,10 @@ def score_from_result_dir(specs: list[AgentEvalSpec], result_dir: str | Path) ->
     return scores
 
 
+def score_mock_results(specs: list[AgentEvalSpec]) -> list[AgentEvalScore]:
+    return [score_result(spec, mock_result_for_spec(spec)) for spec in specs]
+
+
 def _steps(result: dict[str, Any]) -> list[dict[str, Any]]:
     steps = result.get("steps")
     return steps if isinstance(steps, list) else []
@@ -358,10 +412,37 @@ def _current_url(result: dict[str, Any]) -> str:
     return ""
 
 
+def _expected_statuses_for_spec(spec: AgentEvalSpec) -> tuple[str, ...]:
+    profile_statuses = spec.case.expected_status_by_profile or {}
+    expected_for_profile = profile_statuses.get(spec.workflow_profile)
+    if expected_for_profile:
+        return (expected_for_profile,)
+    return spec.case.expected_statuses
+
+
+def _mock_url_for_case(case: AgentEvalCase) -> str:
+    if not case.expect_url_contains:
+        return "https://example.com/"
+    fragment = case.expect_url_contains[0]
+    if fragment.startswith(("http://", "https://")):
+        return fragment
+    if "/" in fragment:
+        return f"https://{fragment}"
+    return f"https://{fragment}/"
+
+
 def _string_tuple(value: Any) -> tuple[str, ...]:
     if isinstance(value, str):
         return (value,)
     return tuple(str(item) for item in value)
+
+
+def _string_map(value: Any) -> dict[str, str] | None:
+    if not value:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("expected_status_by_profile must be an object")
+    return {str(key): str(item) for key, item in value.items()}
 
 
 def _optional_str(value: Any) -> str | None:

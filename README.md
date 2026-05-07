@@ -28,13 +28,13 @@ Works with:
 - **Local-first by default.** Run the full stack on your own box with Docker Compose, or use Codespaces for a quick hosted demo.
 - **Safety rails built in.** Approvals, operator identity, PII scrubbing, Witness receipts, and compliance templates are all part of the product surface.
 
-## Release Highlights (v1.0.3)
+## Release Highlights (v1.0.4)
 
-- **Resumable agent workflows** with `fast` and `governed` profiles plus durable per-step checkpoints
-- **Operator job controls** in `/dashboard` for checkpoint timelines, run resume, stale-job discard, and active-job cancel
-- **Agent eval harness** with Markdown reports and CI validation for repeatable provider/profile comparison
-- **MCP/REST job management** including resume, discard, and cancel operations for background browser-agent work
-- **Service extraction** for cleaner screenshot, trace, download, and JSONL persistence boundaries
+- **Governed workflow enforcement** now blocks write-sensitive agent actions until an approval token is supplied.
+- **Social/Veo3 surfaces are isolated** behind `EXPERIMENTAL_SOCIAL=true` and are absent from the default HTTP and MCP surface.
+- **Stealth defaults off** with `STEALTH_ENABLED=false`, matching the authorized-workflow product stance.
+- **Expanded eval matrix** covers auth reuse, popup/download recovery, upload approval, resume recovery, multi-tab recovery, and `fast` versus `governed` divergence.
+- **Release audit hardening** adds dependency audits, wheel builds, npm audit, and a controller coverage ratchet gate.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the full release history.
 
@@ -136,6 +136,13 @@ The default MCP tool profile is `curated`, which keeps the browser surface compa
 MCP_TOOL_PROFILE=full
 ```
 
+Experimental social/Veo3 tools are not part of the default product surface. They stay hidden unless both conditions are true:
+
+```bash
+EXPERIMENTAL_SOCIAL=true
+MCP_TOOL_PROFILE=full
+```
+
 Raw tool-call example:
 
 ```bash
@@ -170,6 +177,8 @@ AUTH_STATE_ENCRYPTION_KEY=<44-char-fernet-key>
 REQUIRE_AUTH_STATE_ENCRYPTION=true
 REQUEST_RATE_LIMIT_ENABLED=true
 METRICS_ENABLED=true
+STEALTH_ENABLED=false
+EXPERIMENTAL_SOCIAL=false
 ```
 
 `COMPLIANCE_TEMPLATE` can apply a preconfigured posture at startup:
@@ -234,6 +243,7 @@ Core components:
 | `make lint` | run Ruff checks on app, tests, and helper scripts |
 | `make test` | run controller tests in Docker |
 | `make test-local` | run controller tests on host Python 3.10+ |
+| `make eval` | run deterministic provider/profile eval scoring |
 | `make doctor` | run the local readiness smoke |
 | `make release-audit` | run the fuller release-validation pass |
 | `make smoke-isolation` | verify per-session Docker isolation |
@@ -259,12 +269,6 @@ If you want to help, start with:
 - [`docs/good-first-issues.md`](./docs/good-first-issues.md)
 - [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)
 
-Tips: 
-
-BTC: bc1qkn4atphcl5rvrws8anq74t549tp59nhluqcf6q
-
-ETH: 0xD5276F2C998336dA0D0C5BBb2520E27E9D4F2DbF
-
-SOL: 6842P9k3xWAcY4rL5gSHT96nCu1iPDd9iQe6Y1DT6q2C
+Tips moved to [`TIPS.md`](./TIPS.md).
 
 If Auto Browser is useful, a star helps other people find it.

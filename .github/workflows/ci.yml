@@ -24,7 +24,7 @@ jobs:
       - name: Ruff check
         run: make lint
       - name: Validate agent eval matrix
-        run: python scripts/agent_eval.py --json --report-file /tmp/agent-evals.md
+        run: python scripts/agent_eval.py --mock --json --report-file /tmp/agent-evals.md
 
   host-tests:
     needs: lint

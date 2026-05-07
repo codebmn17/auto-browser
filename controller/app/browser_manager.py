@@ -3291,8 +3291,9 @@ class BrowserManager:
         *,
         approval_id: str | None,
         fallback_reason: str | None = None,
+        approval_kind: ApprovalKind | None = None,
     ):
-        kind = self._approval_kind_for_decision(decision)
+        kind = approval_kind or self._approval_kind_for_decision(decision)
         if kind is None:
             return None
         if approval_id:
@@ -3344,6 +3345,28 @@ class BrowserManager:
                 )
             )
         raise ApprovalRequiredError(approval)
+
+    async def require_governed_approval(
+        self,
+        session_id: str,
+        decision: BrowserActionDecision,
+        *,
+        approval_id: str | None,
+    ):
+        kind = self._governed_approval_kind_for_decision(decision)
+        if kind is None:
+            return None
+        reason = (
+            "Governed workflow requires operator approval before executing "
+            f"{decision.risk_category or 'write'} action {decision.action!r}."
+        )
+        return await self._require_decision_approval(
+            session_id,
+            decision,
+            approval_id=approval_id,
+            fallback_reason=reason,
+            approval_kind=kind,
+        )
 
     async def close_session(self, session_id: str) -> dict[str, Any]:
         session = await self.get_session(session_id)
@@ -4481,6 +4504,16 @@ class BrowserManager:
         if decision.risk_category in {"post", "payment", "account_change", "destructive"}:
             return decision.risk_category
         return None
+
+    @staticmethod
+    def _governed_approval_kind_for_decision(decision: BrowserActionDecision) -> ApprovalKind | None:
+        if decision.risk_category == "read":
+            return None
+        if decision.action == "upload" or decision.risk_category == "upload":
+            return "upload"
+        if decision.risk_category in {"post", "payment", "account_change", "destructive"}:
+            return decision.risk_category
+        return "write"
 
     @staticmethod
     def _action_class(action_name: str) -> str:

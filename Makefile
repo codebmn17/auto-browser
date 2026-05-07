@@ -1,4 +1,4 @@
-.PHONY: help lint up up-isolation up-reverse-ssh test test-local coverage doctor release-audit stdio-bridge smoke-isolation smoke-isolation-tunnel smoke-reverse-ssh bootstrap-codex-auth bootstrap-claude-auth bootstrap-gemini-auth bootstrap-all-auth down config config-isolation config-reverse-ssh
+.PHONY: help lint up up-isolation up-reverse-ssh test test-local coverage eval doctor release-audit stdio-bridge smoke-isolation smoke-isolation-tunnel smoke-reverse-ssh bootstrap-codex-auth bootstrap-claude-auth bootstrap-gemini-auth bootstrap-all-auth down config config-isolation config-reverse-ssh
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | sed 's/:.*## /\t/' | sort
@@ -24,6 +24,9 @@ test-local: ## Run controller tests on the host with Python 3.10+
 
 coverage: ## Run controller tests with coverage on the host
 	cd controller && python -m pytest tests/ --cov=app --cov-report=html --cov-report=term-missing
+
+eval: ## Run the deterministic agent eval matrix without live providers
+	python scripts/agent_eval.py --mock
 
 doctor: ## Run the local readiness smoke
 	./scripts/doctor.sh

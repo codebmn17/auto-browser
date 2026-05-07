@@ -2,7 +2,7 @@
 
 This is the near-term direction for Auto Browser.
 
-## Now (current in v1.0.3)
+## Now (current in v1.0.4)
 
 - stable local-first browser control
 - reusable auth profiles + import/export
@@ -36,7 +36,7 @@ This is the near-term direction for Auto Browser.
 ## Recently Shipped
 
 - v1.0.1 security hardening, auth-profile archive fixes, client SDK repair, and dashboard XSS cleanup
-- v1.0.3 resumable/cancellable agent workflows, operator job controls, eval reporting, and artifact/download service cleanup
+- v1.0.4 governed approval enforcement, default-off social/Veo3 surfaces, default-off stealth, broader eval coverage, and release audit hardening
 - Durable background-agent checkpoints with REST/MCP resume support
 - Request-level `fast` and `governed` workflow profiles for agent runs
 - Agent memory profiles for cross-session context persistence

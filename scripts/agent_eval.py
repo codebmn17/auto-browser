@@ -18,6 +18,7 @@ from app.agent_eval import (  # noqa: E402
     plan_payload,
     render_markdown_report,
     score_from_result_dir,
+    score_mock_results,
     score_result,
     summarize_scores,
 )
@@ -34,6 +35,7 @@ def main() -> int:
         help="Directory containing <case>__<provider>__<profile>.json files.",
     )
     parser.add_argument("--execute", action="store_true", help="Execute cases against a running controller.")
+    parser.add_argument("--mock", action="store_true", help="Score deterministic mock results without a provider.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="Controller base URL for --execute.")
     parser.add_argument("--bearer-token", default="")
     parser.add_argument("--operator-id", default="")
@@ -60,6 +62,11 @@ def main() -> int:
         for spec in matrix:
             result = client.run_spec(spec)
             scores.append(score_result(spec, result))
+        _write_report(args.report_file, render_markdown_report(matrix, scores=scores))
+        return _emit_scores(scores, json_output=args.json)
+
+    if args.mock:
+        scores = score_mock_results(matrix)
         _write_report(args.report_file, render_markdown_report(matrix, scores=scores))
         return _emit_scores(scores, json_output=args.json)
 
