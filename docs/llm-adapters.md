@@ -93,8 +93,7 @@ Uses the Gemini `generateContent` API with:
 ```
 
 `workflow_profile` defaults to `fast`. Use `governed` when an operator wants the
-agent to inspect first, avoid ambiguous writes, and request human takeover around
-sensitive account/payment/posting/destructive work.
+agent to inspect first and require approval before write-sensitive actions.
 
 ## Background jobs and resume
 
@@ -127,10 +126,10 @@ The prompt tells all providers to choose `request_human_takeover` for:
 
 Approval stays in the controller, not the model.
 
-If a provider still proposes a sensitive side effect, the controller does not trust it blindly:
-- uploads become approval queue items
-- `post`, `payment`, `account_change`, and `destructive` decisions become approval queue items
-- the step/run returns `approval_required`
+If a provider still proposes a side effect, the controller does not trust it blindly:
+- in `fast`, uploads and high-risk `post`, `payment`, `account_change`, and `destructive` decisions use the approval queue
+- in `governed`, every non-read decision requires approval, including ordinary click/type writes
+- the step/run returns `approval_required` until an approval token is supplied
 
 ## Important limits
 

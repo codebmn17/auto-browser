@@ -4,6 +4,21 @@ All notable changes to auto-browser are documented here.
 
 ## [Unreleased]
 
+## [1.0.4] — 2026-05-06
+
+### Added
+- Added enforced governed workflow approvals for non-read agent actions, including generic click/type writes.
+- Expanded the agent eval matrix to cover auth reuse, popup/download recovery, upload approval, resume recovery, multi-tab recovery, and `fast` versus `governed` divergence.
+- Added deterministic mock eval mode via `make eval`.
+- Added `EXPERIMENTAL_SOCIAL` to explicitly gate social/Veo3 HTTP routes, workflow actions, startup clients, and MCP tools.
+
+### Changed
+- Changed `STEALTH_ENABLED` to default to `false`.
+- Hid social/Veo3 tooling from the default controller and MCP surface unless `EXPERIMENTAL_SOCIAL=true` and `MCP_TOOL_PROFILE=full`.
+- Replaced stale public good-first-issue suggestions with current gaps around multi-tab recovery, MCP resources, auth-profile setup, approval fixtures, and replay.
+- Moved crypto tip addresses out of the README and into `TIPS.md`.
+- Strengthened `scripts/release_audit.sh` with Python dependency audit, browser-node npm audit, Python wheel builds, mock eval scoring, and a controller coverage ratchet gate.
+
 ## [1.0.3] — 2026-05-05
 
 ### Added

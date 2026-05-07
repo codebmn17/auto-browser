@@ -166,6 +166,11 @@ def _init_social_clients(app) -> None:
     app.state.veo3_client = None
     app.state.viral_engine = None
 
+    settings = getattr(app.state, "settings", None)
+    if not getattr(settings, "experimental_social", False):
+        logger.info("startup.social: experimental social clients disabled")
+        return
+
     # YouTube
     if os.environ.get("YOUTUBE_CLIENT_ID"):
         try:
@@ -231,6 +236,10 @@ def _init_social_clients(app) -> None:
 def _register_workflow_actions(app) -> None:
     engine = app.state.workflow_engine
     if engine is None:
+        return
+    settings = getattr(app.state, "settings", None)
+    if not getattr(settings, "experimental_social", False):
+        logger.info("startup.extensions: social workflow actions disabled")
         return
 
     # social.research.viral
@@ -365,8 +374,9 @@ async def on_session_created(app, session_id: str, page) -> None:
         logger.warning("on_session_created: cdp session failed — %s", exc)
 
     try:
+        settings = getattr(app.state, "settings", None)
         stealth_profile = os.environ.get("STEALTH_PROFILE", "off")
-        if stealth_profile != "off":
+        if getattr(settings, "stealth_enabled", False) and stealth_profile != "off":
             from app.stealth.fingerprint import FingerprintConfig, apply_fingerprint
             config = FingerprintConfig(session_id, stealth_profile)
             await apply_fingerprint(page.context, config)

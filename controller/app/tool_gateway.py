@@ -92,6 +92,7 @@ class ToolSpec:
     input_model: type[BaseModel]
     handler: Callable[[BaseModel], Awaitable[dict[str, Any] | list[dict[str, Any]]]]
     profiles: tuple[str, ...] = ("curated", "full")
+    experimental: str | None = None
 
 
 class McpToolGateway:
@@ -375,12 +376,15 @@ class McpToolGateway:
                     input_model=SocialScrollInput,
                     handler=self._social_scroll,
                     profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.extract_posts",
                     description="Scrape visible feed posts from the current page. Returns structured list of {text, links, images, y_position}.",
                     input_model=SocialScrapeInput,
                     handler=self._social_extract_posts,
+                    profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.extract_comments",
@@ -388,12 +392,15 @@ class McpToolGateway:
                     input_model=SocialScrapeInput,
                     handler=self._social_extract_comments,
                     profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.extract_profile",
                     description="Extract profile info (username, bio, followers, following, avatar) from the current page.",
                     input_model=SessionIdInput,
                     handler=self._social_extract_profile,
+                    profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.post",
@@ -405,6 +412,7 @@ class McpToolGateway:
                     input_model=SocialPostInput,
                     handler=self._social_post,
                     profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.comment",
@@ -415,6 +423,7 @@ class McpToolGateway:
                     input_model=SocialCommentInput,
                     handler=self._social_comment,
                     profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.like",
@@ -426,6 +435,7 @@ class McpToolGateway:
                     input_model=SocialLikeInput,
                     handler=self._social_like,
                     profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.follow",
@@ -436,6 +446,7 @@ class McpToolGateway:
                     input_model=SocialFollowInput,
                     handler=self._social_follow,
                     profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.unfollow",
@@ -446,6 +457,7 @@ class McpToolGateway:
                     input_model=SocialUnfollowInput,
                     handler=self._social_unfollow,
                     profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.repost",
@@ -456,6 +468,7 @@ class McpToolGateway:
                     input_model=SocialRepostInput,
                     handler=self._social_repost,
                     profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.dm",
@@ -466,18 +479,23 @@ class McpToolGateway:
                     input_model=SocialDmInput,
                     handler=self._social_dm,
                     profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.login",
                     description="Navigate to the platform login flow, enter credentials, handle TOTP if configured, and save auth state.",
                     input_model=SocialLoginInput,
                     handler=self._social_login,
+                    profiles=("full",),
+                    experimental="social",
                 ),
                 ToolSpec(
                     name="social.search",
                     description="Find the search input on the current page and type a query, then press Enter.",
                     input_model=SocialSearchInput,
                     handler=self._social_search,
+                    profiles=("full",),
+                    experimental="social",
                 ),
                 # ── Network Inspector ──────────────────────────────────────
                 ToolSpec(
@@ -735,10 +753,17 @@ class McpToolGateway:
                     profiles=("full",),
                 ),
             ]
-            if self.tool_profile in spec.profiles
+            if self.tool_profile in spec.profiles and self._experimental_enabled(spec.experimental)
         }
         if vision_targeter is None and "browser.find_by_vision" in self._tools:
             del self._tools["browser.find_by_vision"]
+
+    def _experimental_enabled(self, name: str | None) -> bool:
+        if name is None:
+            return True
+        if name == "social":
+            return bool(getattr(getattr(self.manager, "settings", None), "experimental_social", False))
+        return False
 
     def list_tools(self) -> list[dict[str, Any]]:
         return [

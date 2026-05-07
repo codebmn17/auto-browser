@@ -11,6 +11,7 @@ from app.agent_eval import (
     plan_payload,
     render_markdown_report,
     score_from_result_dir,
+    score_mock_results,
     score_result,
     summarize_scores,
 )
@@ -77,6 +78,39 @@ class AgentEvalTests(unittest.TestCase):
 
             self.assertFalse(scores[0].success)
             self.assertIn("missing result file", scores[0].criteria[-1].detail)
+
+    def test_profile_specific_status_expectations(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            cases_path = Path(tempdir) / "cases.json"
+            cases_path.write_text(
+                json.dumps(
+                    {
+                        "cases": [
+                            {
+                                "id": "governed-blocks-write",
+                                "goal": "Click save",
+                                "providers": ["openai"],
+                                "workflow_profiles": ["fast", "governed"],
+                                "expected_status_by_profile": {
+                                    "fast": "max_steps_reached",
+                                    "governed": "approval_required",
+                                },
+                                "expect_actions": ["click"],
+                                "min_step_count": 1,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            matrix = build_matrix(load_cases(cases_path))
+            fast_score, governed_score = score_mock_results(matrix)
+            wrong_governed = score_result(matrix[1], {"status": "max_steps_reached", "steps": []})
+
+            self.assertTrue(fast_score.success)
+            self.assertTrue(governed_score.success)
+            self.assertFalse(wrong_governed.success)
 
 
 if __name__ == "__main__":

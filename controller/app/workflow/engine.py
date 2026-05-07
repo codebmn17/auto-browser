@@ -41,7 +41,7 @@ class StepStatus(str, Enum):
 @dataclass
 class WorkflowStep:
     id: str
-    action: str                         # e.g. "social.youtube.upload" or "research.viral"
+    action: str                         # e.g. "browser.observe" or "approval.request"
     params: dict[str, Any] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)
     retry_max: int = 2
@@ -107,8 +107,8 @@ class WorkflowEngine:
     Usage::
 
         engine = WorkflowEngine()
-        engine.register_action("social.youtube.upload", youtube_upload_fn)
-        run = await engine.run(workflow_id="social_empire", steps=[...], initial_context={})
+        engine.register_action("browser.observe", observe_fn)
+        run = await engine.run(workflow_id="operator_review", steps=[...], initial_context={})
     """
 
     def __init__(self, workflows_root: Path = _DEFAULT_WORKFLOWS_ROOT) -> None:

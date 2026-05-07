@@ -7,8 +7,10 @@ cd "$ROOT_DIR"
 compose_out="$(mktemp)"
 compose_isolation_out="$(mktemp)"
 secrets_out="$(mktemp)"
+wheelhouse="$(mktemp -d)"
 cleanup() {
   rm -f "$compose_out" "$compose_isolation_out" "$secrets_out"
+  rm -rf "$wheelhouse"
 }
 trap cleanup EXIT
 
@@ -26,7 +28,7 @@ require_file() {
   fi
 }
 
-for bin in git docker curl jq; do
+for bin in git docker curl jq python npm; do
   require_bin "$bin"
 done
 
@@ -37,6 +39,8 @@ for path in \
   CONTRIBUTING.md \
   SECURITY.md \
   ROADMAP.md \
+  TIPS.md \
+  docs/agent-evals.md \
   docs/launch.md \
   docs/mcp-clients.md \
   docs/good-first-issues.md \
@@ -56,8 +60,25 @@ echo "Validating compose configs..."
 echo "Running lint..."
 make lint
 
+echo "Running deterministic agent eval scoring..."
+make eval
+
+echo "Running Python dependency audit..."
+python -m pip_audit -r controller/requirements.txt
+
+echo "Running browser-node production dependency audit..."
+(cd browser-node && npm audit --omit=dev --audit-level=high)
+
+echo "Building Python wheels..."
+for package_dir in controller client integrations/langchain; do
+  python -m build --wheel --outdir "$wheelhouse" "$package_dir"
+done
+
 echo "Running controller tests..."
 make test
+
+echo "Running controller coverage gate..."
+(cd controller && python -m pytest tests/ --cov=app --cov-report=term-missing --cov-fail-under=67.7)
 
 echo "Running readiness smoke..."
 SMOKE_PROVIDER=disabled DOCTOR_BUILD=1 make doctor
