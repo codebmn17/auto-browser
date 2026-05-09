@@ -5,8 +5,6 @@ import fnmatch
 import inspect
 import json
 import logging
-import random
-import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -18,19 +16,13 @@ from uuid import uuid4
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 from playwright.async_api import Error as PlaywrightError
 
-try:  # pragma: no cover - optional until dependency is installed in runtime image
-    import pyotp
-except Exception:  # pragma: no cover - graceful fallback for non-login test runs
-    pyotp = None  # type: ignore[assignment]
-
-from . import events as _events
-from .action_errors import BrowserActionError
-from .actions import ActionRunContext, BrowserActionPipeline
-from .approvals import ApprovalRequiredError, ApprovalStore
+from .actions import BrowserActionPipeline
+from .approvals import ApprovalStore
 from .artifacts import SessionArtifactService
 from .audit import AuditStore, get_current_operator
 from .auth_state import AuthStateManager
 from .browser.services import (
+    BrowserActionService,
     BrowserAuthProfileService,
     BrowserDiagnosticsService,
     BrowserObservationService,
@@ -55,7 +47,6 @@ from .session_isolation import DockerBrowserNodeProvisioner, IsolatedBrowserRunt
 from .session_store import DurableSessionStore
 from .session_tunnel import IsolatedSessionTunnel, IsolatedSessionTunnelBroker
 from .utils import UTC, utc_now
-from .webhooks import dispatch_approval_event
 from .witness import (
     WitnessActionContext,
     WitnessApproval,
@@ -128,6 +119,7 @@ class BrowserManager:
         self.sessions: dict[str, BrowserSession] = {}
         self._browser_lock = asyncio.Lock()
         self.action_pipeline = BrowserActionPipeline()
+        self.actions = BrowserActionService(self)
         self.auth_profiles = BrowserAuthProfileService(self)
         self.tabs = BrowserTabService(self)
         self.uploads = BrowserUploadService(self)
@@ -1090,22 +1082,7 @@ class BrowserManager:
         return await self.observation.stop_trace(session_id)
 
     async def navigate(self, session_id: str, url: str) -> dict[str, Any]:
-        self._assert_url_allowed(url)
-        session = await self.get_session(session_id)
-
-        async def operation() -> None:
-            await session.page.goto(url, wait_until="domcontentloaded")
-            await self._settle(session.page)
-            # Check for bot challenge pages after navigation
-            challenge = await self._check_bot_challenge(session)
-            if challenge:
-                logger.warning("bot challenge detected after navigation: %s", challenge)
-                try:
-                    await self.request_human_takeover(session.id, reason=f"Bot challenge detected: {challenge['signal']}")
-                except Exception:
-                    pass
-
-        return await self._run_action(session, "navigate", {"url": url}, operation)
+        return await self.actions.navigate(session_id, url)
 
     async def click(
         self,
@@ -1116,24 +1093,7 @@ class BrowserManager:
         x: float | None = None,
         y: float | None = None,
     ) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        target = self._resolve_target(selector=selector, element_id=element_id, x=x, y=y)
-
-        async def operation() -> None:
-            if target["mode"] == "coordinates":
-                await self._click_human_like(session, float(x), float(y))
-            else:
-                locator = session.page.locator(target["selector"]).first
-                await locator.scroll_into_view_if_needed()
-                coords = await self._locator_center(locator)
-                if coords is None:
-                    await locator.click()
-                else:
-                    target["x"], target["y"] = coords
-                    await self._click_human_like(session, coords[0], coords[1])
-            await self._settle(session.page)
-
-        return await self._run_action(session, "click", target, operation)
+        return await self.actions.click(session_id, selector=selector, element_id=element_id, x=x, y=y)
 
     async def hover(
         self,
@@ -1144,24 +1104,7 @@ class BrowserManager:
         x: float | None = None,
         y: float | None = None,
     ) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        target = self._resolve_target(selector=selector, element_id=element_id, x=x, y=y)
-
-        async def operation() -> None:
-            if target["mode"] == "coordinates":
-                await self._move_mouse_human_like(session, float(x), float(y))
-            else:
-                locator = session.page.locator(target["selector"]).first
-                await locator.scroll_into_view_if_needed()
-                coords = await self._locator_center(locator)
-                if coords is None:
-                    await locator.hover()
-                else:
-                    target["x"], target["y"] = coords
-                    await self._move_mouse_human_like(session, coords[0], coords[1])
-            await self._settle(session.page)
-
-        return await self._run_action(session, "hover", target, operation)
+        return await self.actions.hover(session_id, selector=selector, element_id=element_id, x=x, y=y)
 
     async def select_option(
         self,
@@ -1173,25 +1116,13 @@ class BrowserManager:
         label: str | None = None,
         index: int | None = None,
     ) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        target = self._resolve_target(selector=selector, element_id=element_id)
-
-        async def operation() -> None:
-            locator = session.page.locator(target["selector"]).first
-            await locator.scroll_into_view_if_needed()
-            if index is not None:
-                await locator.select_option(index=index)
-            elif value is not None:
-                await locator.select_option(value=value)
-            else:
-                await locator.select_option(label=label)
-            await self._settle(session.page)
-
-        return await self._run_action(
-            session,
-            "select_option",
-            {**target, "value": value, "label": label, "index": index},
-            operation,
+        return await self.actions.select_option(
+            session_id,
+            selector=selector,
+            element_id=element_id,
+            value=value,
+            label=label,
+            index=index,
         )
 
     async def type(
@@ -1204,30 +1135,13 @@ class BrowserManager:
         clear_first: bool = True,
         sensitive: bool = False,
     ) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        target = self._resolve_target(selector=selector, element_id=element_id)
-        payload = self._text_target_payload(target, text, clear_first=clear_first, sensitive=sensitive, preview_chars=80)
-
-        async def operation() -> None:
-            locator = session.page.locator(target["selector"]).first
-            if await self._locator_is_sensitive_input(locator):
-                payload.pop("text_preview", None)
-                payload["text_redacted"] = True
-            await locator.scroll_into_view_if_needed()
-            await self._focus_locator(session, locator)
-            if clear_first:
-                await session.page.keyboard.press("Control+a")
-                await asyncio.sleep(0.03)
-                await session.page.keyboard.press("Delete")
-                await asyncio.sleep(0.05)
-            await self._type_text_human_like(session.page, text)
-            await self._settle(session.page)
-
-        return await self._run_action(
-            session,
-            "type",
-            payload,
-            operation,
+        return await self.actions.type(
+            session_id,
+            text=text,
+            selector=selector,
+            element_id=element_id,
+            clear_first=clear_first,
+            sensitive=sensitive,
         )
 
     @staticmethod
@@ -1239,94 +1153,34 @@ class BrowserManager:
         sensitive: bool,
         preview_chars: int,
     ) -> dict[str, Any]:
-        payload = {**target, "clear_first": clear_first}
-        if sensitive:
-            payload["text_redacted"] = True
-        else:
-            payload["text_preview"] = text[:preview_chars]
-        return payload
-
-    async def _locator_is_sensitive_input(self, locator: Any) -> bool:
-        try:
-            attributes = {
-                "type": await locator.get_attribute("type"),
-                "name": await locator.get_attribute("name"),
-                "id": await locator.get_attribute("id"),
-                "autocomplete": await locator.get_attribute("autocomplete"),
-                "placeholder": await locator.get_attribute("placeholder"),
-                "aria_label": await locator.get_attribute("aria-label"),
-            }
-        except Exception:
-            return False
-
-        input_type = (attributes.get("type") or "").strip().lower()
-        if input_type == "password":
-            return True
-
-        autocomplete = (attributes.get("autocomplete") or "").strip().lower()
-        if autocomplete in {"current-password", "new-password", "one-time-code"}:
-            return True
-
-        haystack = " ".join(str(value or "") for value in attributes.values()).lower()
-        return bool(re.search(r"password|passcode|otp|one[- ]time|verification|token|secret|2fa|mfa", haystack))
-
-    async def press(self, session_id: str, key: str) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-
-        async def operation() -> None:
-            await session.page.keyboard.press(key)
-            await self._settle(session.page)
-
-        return await self._run_action(session, "press", {"key": key}, operation)
-
-    async def scroll(self, session_id: str, delta_x: float, delta_y: float) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-
-        async def operation() -> None:
-            await session.page.mouse.wheel(delta_x, delta_y)
-            await self._settle(session.page)
-
-        return await self._run_action(
-            session,
-            "scroll",
-            {"delta_x": delta_x, "delta_y": delta_y},
-            operation,
+        return BrowserActionService.text_target_payload(
+            target,
+            text,
+            clear_first=clear_first,
+            sensitive=sensitive,
+            preview_chars=preview_chars,
         )
 
+    async def _locator_is_sensitive_input(self, locator: Any) -> bool:
+        return await self.actions.locator_is_sensitive_input(locator)
+
+    async def press(self, session_id: str, key: str) -> dict[str, Any]:
+        return await self.actions.press(session_id, key)
+
+    async def scroll(self, session_id: str, delta_x: float, delta_y: float) -> dict[str, Any]:
+        return await self.actions.scroll(session_id, delta_x, delta_y)
+
     async def wait(self, session_id: str, wait_ms: int) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-
-        async def operation() -> None:
-            await asyncio.sleep(max(0, wait_ms) / 1000)
-
-        return await self._run_action(session, "wait", {"wait_ms": wait_ms}, operation)
+        return await self.actions.wait(session_id, wait_ms)
 
     async def reload(self, session_id: str) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-
-        async def operation() -> None:
-            await session.page.reload(wait_until="domcontentloaded")
-            await self._settle(session.page)
-
-        return await self._run_action(session, "reload", {}, operation)
+        return await self.actions.reload(session_id)
 
     async def go_back(self, session_id: str) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-
-        async def operation() -> None:
-            await session.page.go_back(wait_until="domcontentloaded")
-            await self._settle(session.page)
-
-        return await self._run_action(session, "go_back", {}, operation)
+        return await self.actions.go_back(session_id)
 
     async def go_forward(self, session_id: str) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-
-        async def operation() -> None:
-            await session.page.go_forward(wait_until="domcontentloaded")
-            await self._settle(session.page)
-
-        return await self._run_action(session, "go_forward", {}, operation)
+        return await self.actions.go_forward(session_id)
 
     async def list_tabs(self, session_id: str) -> list[dict[str, Any]]:
         return await self.tabs.list(session_id)
@@ -1344,145 +1198,25 @@ class BrowserManager:
         return await self.diagnostics.list_downloads(session_id)
 
     async def _locator_center(self, locator: Any) -> tuple[float, float] | None:
-        try:
-            box = await locator.bounding_box()
-        except Exception:
-            return None
-        if not box:
-            return None
-        return (float(box["x"] + box["width"] / 2), float(box["y"] + box["height"] / 2))
+        return await self.actions.locator_center(locator)
 
     async def _move_mouse_human_like(self, session: BrowserSession, x: float, y: float) -> None:
-        start = session.mouse_position
-        if start is None:
-            start = (
-                self.settings.default_viewport_width / 2 + random.randint(-120, 120),
-                self.settings.default_viewport_height / 2 + random.randint(-80, 80),
-            )
-            await session.page.mouse.move(start[0], start[1])
-            session.mouse_position = start
-
-        start_x, start_y = start
-        control_1 = (
-            start_x + (x - start_x) * random.uniform(0.2, 0.4) + random.randint(-80, 80),
-            start_y + (y - start_y) * random.uniform(0.1, 0.5) + random.randint(-80, 80),
-        )
-        control_2 = (
-            start_x + (x - start_x) * random.uniform(0.6, 0.85) + random.randint(-60, 60),
-            start_y + (y - start_y) * random.uniform(0.5, 0.9) + random.randint(-60, 60),
-        )
-        steps = random.randint(18, 34)
-        for step in range(1, steps + 1):
-            t = step / steps
-            inv = 1 - t
-            px = (
-                inv**3 * start_x
-                + 3 * inv * inv * t * control_1[0]
-                + 3 * inv * t * t * control_2[0]
-                + t**3 * x
-            )
-            py = (
-                inv**3 * start_y
-                + 3 * inv * inv * t * control_1[1]
-                + 3 * inv * t * t * control_2[1]
-                + t**3 * y
-            )
-            await session.page.mouse.move(px, py)
-            await asyncio.sleep(random.uniform(0.004, 0.018))
-        session.mouse_position = (x, y)
+        await self.actions.move_mouse_human_like(session, x, y)
 
     async def _click_human_like(self, session: BrowserSession, x: float, y: float) -> None:
-        jitter_x = x + random.uniform(-2.5, 2.5)
-        jitter_y = y + random.uniform(-2.5, 2.5)
-        await self._move_mouse_human_like(session, jitter_x, jitter_y)
-        await asyncio.sleep(random.uniform(0.03, 0.12))
-        await session.page.mouse.down()
-        await asyncio.sleep(random.uniform(0.02, 0.08))
-        await session.page.mouse.up()
-        session.mouse_position = (jitter_x, jitter_y)
+        await self.actions.click_human_like(session, x, y)
 
     async def _focus_locator(self, session: BrowserSession, locator: Any) -> None:
-        coords = await self._locator_center(locator)
-        if coords is None:
-            await locator.click()
-        else:
-            await self._click_human_like(session, coords[0], coords[1])
-        await asyncio.sleep(0.05 + random.random() * 0.1)
+        await self.actions.focus_locator(session, locator)
 
     async def _type_text_human_like(self, page: Page, text: str) -> None:
-        for index, char in enumerate(text):
-            await page.keyboard.type(char)
-            delay_ms = random.randint(
-                self.settings.human_typing_min_delay_ms,
-                self.settings.human_typing_max_delay_ms,
-            )
-            if index > 0 and index % random.randint(6, 12) == 0:
-                delay_ms += random.randint(180, 600)
-            await asyncio.sleep(delay_ms / 1000)
+        await self.actions.type_text_human_like(page, text)
 
     async def _first_visible_locator(self, page: Page, selectors: list[str]) -> tuple[Any, str] | None:
-        for selector in selectors:
-            try:
-                locator = page.locator(selector).first
-                if await locator.count() > 0 and await locator.is_visible():
-                    return locator, selector
-            except Exception:
-                continue
-        return None
+        return await self.actions.first_visible_locator(page, selectors)
 
     async def _maybe_handle_totp(self, session: BrowserSession) -> dict[str, Any] | None:
-        if not session.totp_secret:
-            return None
-        if pyotp is None:
-            raise BrowserActionError(
-                "TOTP support is not installed in this controller runtime",
-                action="totp_fill",
-                code="totp_unavailable",
-                retryable=False,
-                details={"url": session.page.url},
-            )
-        selectors = [
-            'input[autocomplete="one-time-code"]',
-            'input[inputmode="numeric"][maxlength="6"]',
-            'input[name*="otp" i]',
-            'input[name*="code" i]',
-            'input[id*="otp" i]',
-            'input[id*="code" i]',
-            'input[aria-label*="code" i]',
-            'input[placeholder*="code" i]',
-        ]
-        located = await self._first_visible_locator(session.page, selectors)
-        if located is None:
-            return None
-
-        locator, selector = located
-        code = pyotp.TOTP(session.totp_secret).now()
-        await self._focus_locator(session, locator)
-        try:
-            await locator.fill("")
-        except Exception:
-            await session.page.keyboard.press("Control+a")
-            await session.page.keyboard.press("Delete")
-        await self._type_text_human_like(session.page, code)
-        submit = await self._first_visible_locator(
-            session.page,
-            [
-                'button[type="submit"]',
-                '[aria-label*="verify" i][role="button"]',
-                'button:has-text("Verify")',
-                'button:has-text("Continue")',
-                'button:has-text("Next")',
-                'button:has-text("Submit")',
-            ],
-        )
-        if submit is not None:
-            coords = await self._locator_center(submit[0])
-            if coords is None:
-                await submit[0].click()
-            else:
-                await self._click_human_like(session, coords[0], coords[1])
-        await self._settle(session.page)
-        return {"selector": selector, "code_length": len(code)}
+        return await self.actions.maybe_handle_totp(session)
 
     @staticmethod
     def _host_matches(host: str, *domains: str) -> bool:
@@ -1512,86 +1246,7 @@ class BrowserManager:
         *,
         approval_id: str | None = None,
     ) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        approval = await self._require_decision_approval(
-            session_id,
-            decision,
-            approval_id=approval_id,
-        )
-        session.pending_witness_context = {
-            "risk_category": decision.risk_category,
-            "approval_id": approval_id or (approval.id if approval is not None else None),
-            "approval_status": "approved" if approval_id or approval is not None else None,
-            "runtime_requires_approval": approval is not None or approval_id is not None,
-            "sensitive_input": bool(getattr(decision, "sensitive", False)),
-        }
-        try:
-            if decision.action == "navigate":
-                result = await self.navigate(session_id, decision.url or "")
-            elif decision.action == "click":
-                result = await self.click(
-                    session_id,
-                    selector=decision.selector,
-                    element_id=decision.element_id,
-                    x=decision.x,
-                    y=decision.y,
-                )
-            elif decision.action == "hover":
-                result = await self.hover(
-                    session_id,
-                    selector=decision.selector,
-                    element_id=decision.element_id,
-                    x=decision.x,
-                    y=decision.y,
-                )
-            elif decision.action == "select_option":
-                result = await self.select_option(
-                    session_id,
-                    selector=decision.selector,
-                    element_id=decision.element_id,
-                    value=decision.value,
-                    label=decision.label,
-                    index=decision.index,
-                )
-            elif decision.action == "type":
-                result = await self.type(
-                    session_id,
-                    selector=decision.selector,
-                    element_id=decision.element_id,
-                    text=decision.text or "",
-                    clear_first=decision.clear_first,
-                    sensitive=decision.sensitive,
-                )
-            elif decision.action == "press":
-                result = await self.press(session_id, decision.key or "")
-            elif decision.action == "scroll":
-                result = await self.scroll(session_id, decision.delta_x, decision.delta_y)
-            elif decision.action == "wait":
-                result = await self.wait(session_id, decision.wait_ms)
-            elif decision.action == "reload":
-                result = await self.reload(session_id)
-            elif decision.action == "go_back":
-                result = await self.go_back(session_id)
-            elif decision.action == "go_forward":
-                result = await self.go_forward(session_id)
-            elif decision.action == "upload":
-                result = await self.upload(
-                    session_id,
-                    selector=decision.selector,
-                    element_id=decision.element_id,
-                    file_path=decision.file_path or "",
-                    approved=False,
-                    approval_id=approval_id,
-                )
-                return result
-            else:  # pragma: no cover - guarded by schema
-                raise ValueError(f"Unsupported action: {decision.action}")
-
-            if approval is not None:
-                await self.approvals.mark_executed(approval.id)
-            return result
-        finally:
-            session.pending_witness_context = None
+        return await self.actions.execute_decision(session_id, decision, approval_id=approval_id)
 
     async def upload(
         self,
@@ -1678,58 +1333,13 @@ class BrowserManager:
         fallback_reason: str | None = None,
         approval_kind: ApprovalKind | None = None,
     ):
-        kind = approval_kind or self._approval_kind_for_decision(decision)
-        if kind is None:
-            return None
-        if approval_id:
-            return await self.approvals.require_approved(
-                approval_id=approval_id,
-                session_id=session_id,
-                kind=kind,
-                action=decision,
-            )
-
-        session = await self.get_session(session_id)
-        approval = await self.approvals.create_or_reuse_pending(
-            session_id=session_id,
-            kind=kind,
-            reason=fallback_reason or decision.reason,
-            action=decision,
-            observation=await self._approval_observation(session),
+        return await self.actions.require_decision_approval(
+            session_id,
+            decision,
+            approval_id=approval_id,
+            fallback_reason=fallback_reason,
+            approval_kind=approval_kind,
         )
-        await self._record_witness_receipt(
-            session,
-            event_type="approval",
-            status="pending",
-            action="approval_requested",
-            action_class="control",
-            risk_category=decision.risk_category,
-            approval=WitnessApproval(
-                required=True,
-                approval_id=approval.id,
-                status=approval.status,
-                reason=approval.reason,
-            ),
-            target={
-                "kind": approval.kind,
-                "action": decision.action,
-                "selector": decision.selector,
-                "element_id": decision.element_id,
-            },
-            metadata={"reason": approval.reason},
-        )
-        # Emit SSE event
-        _events.emit_approval(session_id, approval.id, approval.kind, approval.status, approval.reason)
-        # Fire webhook if configured
-        if self.settings.approval_webhook_url:
-            asyncio.ensure_future(
-                dispatch_approval_event(
-                    approval,
-                    webhook_url=self.settings.approval_webhook_url,
-                    webhook_secret=self.settings.approval_webhook_secret,
-                )
-            )
-        raise ApprovalRequiredError(approval)
 
     async def require_governed_approval(
         self,
@@ -1738,20 +1348,7 @@ class BrowserManager:
         *,
         approval_id: str | None,
     ):
-        kind = self._governed_approval_kind_for_decision(decision)
-        if kind is None:
-            return None
-        reason = (
-            "Governed workflow requires operator approval before executing "
-            f"{decision.risk_category or 'write'} action {decision.action!r}."
-        )
-        return await self._require_decision_approval(
-            session_id,
-            decision,
-            approval_id=approval_id,
-            fallback_reason=reason,
-            approval_kind=kind,
-        )
+        return await self.actions.require_governed_approval(session_id, decision, approval_id=approval_id)
 
     async def close_session(self, session_id: str) -> dict[str, Any]:
         session = await self.get_session(session_id)
@@ -1833,15 +1430,7 @@ class BrowserManager:
         target: dict[str, Any],
         operation,
     ) -> dict[str, Any]:
-        return await self.action_pipeline.run(
-            ActionRunContext(
-                manager=self,
-                session=session,
-                action_name=action_name,
-                target=target,
-                operation=operation,
-            )
-        )
+        return await self.actions.run_action(session, action_name, target, operation)
 
 
     # Known bot challenge URL patterns and page signals
@@ -2373,35 +1962,15 @@ class BrowserManager:
         }
 
     def _approval_kind_for_decision(self, decision: BrowserActionDecision) -> ApprovalKind | None:
-        if decision.action == "upload":
-            return "upload" if self.settings.require_approval_for_uploads else None
-        if decision.risk_category in {"post", "payment", "account_change", "destructive"}:
-            return decision.risk_category
-        return None
+        return self.actions.approval_kind_for_decision(decision)
 
     @staticmethod
     def _governed_approval_kind_for_decision(decision: BrowserActionDecision) -> ApprovalKind | None:
-        if decision.risk_category == "read":
-            return None
-        if decision.action == "upload" or decision.risk_category == "upload":
-            return "upload"
-        if decision.risk_category in {"post", "payment", "account_change", "destructive"}:
-            return decision.risk_category
-        return "write"
+        return BrowserActionService.governed_approval_kind_for_decision(decision)
 
     @staticmethod
     def _action_class(action_name: str) -> str:
-        if action_name in {
-            "navigate",
-            "hover",
-            "scroll",
-            "wait",
-            "reload",
-            "go_back",
-            "go_forward",
-        }:
-            return "read"
-        return "write"
+        return BrowserActionService.action_class(action_name)
 
     def _assert_url_allowed(self, url: str) -> None:
         host = urlparse(url).hostname
@@ -2426,17 +1995,7 @@ class BrowserManager:
         x: float | None = None,
         y: float | None = None,
     ) -> dict[str, Any]:
-        if element_id:
-            return {
-                "mode": "selector",
-                "element_id": element_id,
-                "selector": f'[data-operator-id="{element_id}"]',
-            }
-        if selector:
-            return {"mode": "selector", "selector": selector}
-        if x is not None and y is not None:
-            return {"mode": "coordinates", "x": x, "y": y}
-        raise ValueError("Provide selector, element_id, or x+y coordinates")
+        return BrowserActionService.resolve_target(selector=selector, element_id=element_id, x=x, y=y)
 
     def _safe_upload_path(self, file_path: str, *, session: BrowserSession | None = None) -> Path:
         return self.uploads.safe_path(file_path, session=session)
