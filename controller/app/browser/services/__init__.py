@@ -7,6 +7,7 @@ from .observation import BrowserObservationService
 from .sessions import BrowserSessionService
 from .tabs import BrowserTabService
 from .uploads import BrowserUploadService
+from .witness import BrowserWitnessService
 
 __all__ = [
     "BrowserActionService",
@@ -16,4 +17,5 @@ __all__ = [
     "BrowserSessionService",
     "BrowserTabService",
     "BrowserUploadService",
+    "BrowserWitnessService",
 ]

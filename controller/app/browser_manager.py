@@ -19,7 +19,7 @@ from playwright.async_api import Error as PlaywrightError
 from .actions import BrowserActionPipeline
 from .approvals import ApprovalStore
 from .artifacts import SessionArtifactService
-from .audit import AuditStore, get_current_operator
+from .audit import AuditStore
 from .auth_state import AuthStateManager
 from .browser.services import (
     BrowserActionService,
@@ -29,6 +29,7 @@ from .browser.services import (
     BrowserSessionService,
     BrowserTabService,
     BrowserUploadService,
+    BrowserWitnessService,
 )
 from .browser_scripts import apply_stealth
 from .config import Settings
@@ -50,7 +51,6 @@ from .utils import UTC, utc_now
 from .witness import (
     WitnessActionContext,
     WitnessApproval,
-    WitnessEvidence,
     WitnessPolicyEngine,
     WitnessPolicyOutcome,
     WitnessRecorder,
@@ -125,6 +125,7 @@ class BrowserManager:
         self.uploads = BrowserUploadService(self)
         self.observation = BrowserObservationService(self)
         self.session_lifecycle = BrowserSessionService(self)
+        self.witness_bridge = BrowserWitnessService(self)
 
         Path(self.settings.artifact_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.upload_root).mkdir(parents=True, exist_ok=True)
@@ -1295,58 +1296,19 @@ class BrowserManager:
         return [item.model_dump() for item in receipts]
 
     def _initial_witness_remote_state(self, protection_mode: str) -> WitnessRemoteState:
-        configured = bool(self.settings.witness_enabled and self.witness_remote.enabled)
-        return WitnessRemoteState(
-            configured=configured,
-            required=self._witness_remote_required_for_profile(protection_mode),
-            tenant_id=self.settings.witness_remote_tenant_id,
-            status="idle" if configured else "disabled",
-        )
+        return self.witness_bridge.initial_remote_state(protection_mode)
 
     def _witness_remote_required_for_profile(self, protection_mode: str) -> bool:
-        return bool(
-            self.settings.witness_enabled
-            and protection_mode == "confidential"
-            and self.settings.witness_remote_required_for_confidential
-        )
+        return self.witness_bridge.remote_required_for_profile(protection_mode)
 
     async def _ensure_witness_remote_ready(self, session: BrowserSession, *, action: str) -> None:
-        if not session.witness_remote_state.required:
-            return
-        checked_at = utc_now()
-        if not self.witness_remote.enabled:
-            session.witness_remote_state.status = "failed"
-            session.witness_remote_state.last_checked_at = checked_at
-            session.witness_remote_state.last_error = (
-                "Confidential session requires hosted Witness delivery, but WITNESS_REMOTE_URL is not configured."
-            )
-            raise PermissionError(session.witness_remote_state.last_error)
-        try:
-            await self.witness_remote.healthz()
-        except Exception as exc:
-            session.witness_remote_state.status = "failed"
-            session.witness_remote_state.last_checked_at = checked_at
-            session.witness_remote_state.last_error = (
-                f"Hosted Witness preflight failed before {action}."
-            )
-            raise PermissionError(session.witness_remote_state.last_error) from exc
-        session.witness_remote_state.status = "healthy"
-        session.witness_remote_state.last_checked_at = checked_at
-        session.witness_remote_state.last_error = None
+        await self.witness_bridge.ensure_remote_ready(session, action=action)
 
     def _auth_material_encryption_ready(self) -> bool:
-        return bool(self.auth_state.require_encryption or self.auth_state.encryption_enabled)
+        return self.witness_bridge.auth_material_encryption_ready()
 
     def _witness_session_context(self, session: BrowserSession) -> WitnessSessionContext:
-        return WitnessSessionContext(
-            session_id=session.id,
-            profile=session.protection_mode,  # type: ignore[arg-type]
-            isolation_mode=session.isolation_mode,
-            shared_takeover_surface=session.shared_takeover_surface,
-            shared_browser_process=session.shared_browser_process,
-            auth_state_encrypted=self._auth_material_encryption_ready(),
-            operator=get_current_operator(),
-        )
+        return self.witness_bridge.session_context(session)
 
     async def _record_witness_receipt(
         self,
@@ -1365,57 +1327,21 @@ class BrowserManager:
         approval: WitnessApproval | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        if not self.settings.witness_enabled:
-            return
-        policy = outcome or WitnessPolicyOutcome(profile=session.protection_mode)  # type: ignore[arg-type]
-        payload = {
-            "profile": session.protection_mode,  # type: ignore[arg-type]
-            "event_type": event_type,
-            "status": status,
-            "action": action,
-            "action_class": action_class,  # type: ignore[arg-type]
-            "session_id": session.id,
-            "risk_category": risk_category,
-            "operator": get_current_operator(),
-            "approval": approval or WitnessApproval(),
-            "target": self.witness_policy.redact_target(target or {}, evidence_mode=policy.evidence_mode),
-            "concerns": policy.concerns,
-            "evidence_mode": policy.evidence_mode,
-            "evidence": WitnessEvidence(
-                before=before if policy.evidence_mode == "standard" else None,
-                after=after if policy.evidence_mode == "standard" else None,
-                verification=verification,
-                artifacts={},
-            ),
-            "metadata": metadata or {},
-        }
-        recorded = await self.witness.record(session.id, **payload)
-        if not self.witness_remote.enabled:
-            return
-        attempted_at = utc_now()
-        try:
-            await self.witness_remote.record(
-                session.id,
-                recorded.model_dump(
-                    mode="json",
-                    exclude={"receipt_id", "scope", "chain_prev_hash", "chain_hash"},
-                ),
-            )
-        except Exception as exc:
-            session.witness_remote_state.status = "failed"
-            session.witness_remote_state.last_attempted_at = attempted_at
-            session.witness_remote_state.last_error = f"Hosted Witness delivery failed for {action}."
-            logger.warning(
-                "witness remote delivery failed for session %s action %s: %s",
-                session.id,
-                action,
-                exc,
-            )
-            return
-        session.witness_remote_state.status = "delivered"
-        session.witness_remote_state.last_attempted_at = attempted_at
-        session.witness_remote_state.last_delivered_at = attempted_at
-        session.witness_remote_state.last_error = None
+        await self.witness_bridge.record_receipt(
+            session,
+            event_type=event_type,
+            status=status,
+            action=action,
+            action_class=action_class,
+            risk_category=risk_category,
+            target=target,
+            outcome=outcome,
+            before=before,
+            after=after,
+            verification=verification,
+            approval=approval,
+            metadata=metadata,
+        )
 
     async def _record_session_witness_receipt(
         self,
@@ -1425,36 +1351,18 @@ class BrowserManager:
         status: str,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        if not self.settings.witness_enabled:
-            return
-        outcome = self.witness_policy.evaluate_session(self._witness_session_context(session))
-        await self._record_witness_receipt(
+        await self.witness_bridge.record_session_receipt(
             session,
-            event_type="session",
-            status=status,
             action=action,
-            action_class="control",
-            outcome=outcome,
+            status=status,
             metadata=metadata,
         )
 
     def _witness_action_class(self, action_name: str, *, risk_category: str | None = None) -> str:
-        if risk_category in {"payment", "account_change", "destructive"}:
-            return risk_category
-        if action_name == "upload":
-            return "upload"
-        if action_name in {"save_auth_profile", "save_storage_state"}:
-            return "auth"
-        if action_name in {"request_human_takeover", "close_session", "create_session"}:
-            return "control"
-        if action_name in {"navigate", "hover", "scroll", "wait", "reload", "go_back", "go_forward"}:
-            return "read"
-        return "write"
+        return BrowserWitnessService.action_class(action_name, risk_category=risk_category)
 
     def _consume_witness_context(self, session: BrowserSession) -> dict[str, Any]:
-        payload = dict(session.pending_witness_context or {})
-        session.pending_witness_context = None
-        return payload
+        return BrowserWitnessService.consume_context(session)
 
     def _build_witness_action_context(
         self,
@@ -1463,27 +1371,10 @@ class BrowserManager:
         target: dict[str, Any],
         witness_context: dict[str, Any],
     ) -> WitnessActionContext:
-        risk_category = witness_context.get("risk_category")
-        action_class = self._witness_action_class(action_name, risk_category=risk_category)
-        sensitive_input = bool(
-            witness_context.get("sensitive_input")
-            or target.get("text_redacted")
-            or target.get("sensitive")
-        )
-        stores_auth_material = bool(
-            witness_context.get("stores_auth_material")
-            or action_name in {"save_auth_profile", "save_storage_state"}
-        )
-        return WitnessActionContext(
-            action=action_name,
-            action_class=action_class,  # type: ignore[arg-type]
-            risk_category=risk_category,
+        return self.witness_bridge.build_action_context(
+            action_name=action_name,
             target=target,
-            approval_id=(witness_context.get("approval_id") or target.get("approval_id")),
-            approval_status=witness_context.get("approval_status"),
-            sensitive_input=sensitive_input,
-            stores_auth_material=stores_auth_material,
-            runtime_requires_approval=bool(witness_context.get("runtime_requires_approval")),
+            witness_context=witness_context,
         )
 
     @staticmethod
