@@ -37,7 +37,6 @@ from .models import (
     HoverRequest,
     HumanTakeoverRequest,
     ImportAuthProfileRequest,
-    McpToolCallRequest,
     NavigateRequest,
     ObserveRequest,
     OpenTabRequest,
@@ -54,6 +53,7 @@ from .models import (
     WaitRequest,
 )
 from .rate_limits import build_rate_limit_key, is_exempt_path
+from .routes.mcp import create_mcp_router
 from .runtime_policy import validate_runtime_policy
 from .tool_inputs import CreateCronJobInput, CreateProxyPersonaInput, TriggerCronJobInput
 
@@ -153,6 +153,7 @@ async def lifespan(application: FastAPI):
 
 
 app = create_controller_app(services=services, version=_VERSION, lifespan=lifespan)
+app.include_router(create_mcp_router(mcp_transport=mcp_transport, tool_gateway=tool_gateway))
 
 # Legacy operator dashboard aliases now redirect to the auth-bootstrap-aware dashboard.
 @app.get("/ui", include_in_schema=False)
@@ -798,31 +799,6 @@ async def cancel_agent_job(job_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Unknown job") from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-
-
-@app.get("/mcp")
-async def get_mcp_transport(request: Request):
-    return await mcp_transport.handle_get_request(request)
-
-
-@app.post("/mcp")
-async def post_mcp_transport(request: Request):
-    return await mcp_transport.handle_post_request(request)
-
-
-@app.delete("/mcp")
-async def delete_mcp_transport(request: Request):
-    return await mcp_transport.handle_delete_request(request)
-
-
-@app.get("/mcp/tools")
-async def list_mcp_tools() -> list[dict]:
-    return tool_gateway.list_tools()
-
-
-@app.post("/mcp/tools/call")
-async def call_mcp_tool(payload: McpToolCallRequest) -> dict:
-    return (await tool_gateway.call_tool(payload)).model_dump(exclude_none=True, by_alias=True)
 
 
 @app.get("/sessions/{session_id}/events")
