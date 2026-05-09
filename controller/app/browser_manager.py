@@ -32,7 +32,7 @@ from .approvals import ApprovalRequiredError, ApprovalStore
 from .artifacts import SessionArtifactService
 from .audit import AuditStore, get_current_operator
 from .auth_state import AuthStateManager
-from .browser.services import BrowserTabService
+from .browser.services import BrowserDiagnosticsService, BrowserTabService
 from .browser_scripts import (
     ACTIVE_ELEMENT_SCRIPT,
     INTERACTABLES_SCRIPT,
@@ -177,6 +177,11 @@ class BrowserManager:
             text_limit=self.settings.ocr_text_limit,
         )
         self.pii_scrubber = PiiScrubber.from_settings(self.settings)
+        self.diagnostics = BrowserDiagnosticsService(
+            self,
+            self.pii_scrubber,
+            self.download_capture,
+        )
         self.witness = WitnessRecorder(self.settings.witness_root)
         self.witness_remote = WitnessRemoteClient(
             base_url=self.settings.witness_remote_url,
@@ -946,23 +951,7 @@ class BrowserManager:
             }
 
     async def get_console_messages(self, session_id: str, *, limit: int = 20) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        async with session.lock:
-            messages = session.console_messages[-limit:]
-            if self.pii_scrubber.console_enabled:
-                messages, hits = self.pii_scrubber.console(messages)
-                if hits and self.pii_scrubber.audit_report:
-                    await self.audit.append(
-                        event_type="pii_redaction",
-                        status="ok",
-                        action="console_scrub",
-                        session_id=session_id,
-                        details=self.pii_scrubber.build_audit_report(session_id, "console", hits),
-                    )
-            return {
-                "session": await self._session_summary(session),
-                "items": messages,
-            }
+        return await self.diagnostics.get_console_messages(session_id, limit=limit)
 
     async def get_network_log(
         self,
@@ -1110,20 +1099,10 @@ class BrowserManager:
         }
 
     async def get_page_errors(self, session_id: str, *, limit: int = 20) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        async with session.lock:
-            return {
-                "session": await self._session_summary(session),
-                "items": session.page_errors[-limit:],
-            }
+        return await self.diagnostics.get_page_errors(session_id, limit=limit)
 
     async def get_request_failures(self, session_id: str, *, limit: int = 20) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        async with session.lock:
-            return {
-                "session": await self._session_summary(session),
-                "items": session.request_failures[-limit:],
-            }
+        return await self.diagnostics.get_request_failures(session_id, limit=limit)
 
     async def stop_trace(self, session_id: str) -> dict[str, Any]:
         session = await self.get_session(session_id)
@@ -1386,11 +1365,7 @@ class BrowserManager:
         return await self.tabs.close(session_id, index)
 
     async def list_downloads(self, session_id: str) -> list[dict[str, Any]]:
-        session = self.sessions.get(session_id)
-        if session is not None:
-            return list(session.downloads)
-        record = await self.session_store.get(session_id)
-        return list(record.downloads)
+        return await self.diagnostics.list_downloads(session_id)
 
     async def _locator_center(self, locator: Any) -> tuple[float, float] | None:
         try:
@@ -3036,19 +3011,7 @@ class BrowserManager:
             del items[: len(items) - limit]
 
     async def _handle_download(self, session: BrowserSession, download: Any) -> None:
-        record = await self.download_capture.capture(session, download)
-        await self.audit.append(
-            event_type="download_captured",
-            status=record["status"],
-            action="download",
-            session_id=session.id,
-            details={"filename": record["filename"], "url": record["url"], "failure": record["failure"]},
-        )
-        if session.id in self.sessions:
-            try:
-                await self._persist_session(session, status="active")
-            except Exception as exc:
-                logger.warning("failed to persist download metadata for session %s: %s", session.id, exc)
+        return await self.diagnostics.handle_download(session, download)
 
     async def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
         await self.artifacts.append_jsonl(path, payload)
