@@ -21,6 +21,7 @@ from .audit import AuditStore
 from .auth_state import AuthStateManager
 from .browser.services import (
     BrowserActionService,
+    BrowserApprovalService,
     BrowserAuthProfileService,
     BrowserBotChallengeService,
     BrowserDiagnosticsService,
@@ -120,6 +121,7 @@ class BrowserManager:
         self._browser_lock = asyncio.Lock()
         self.action_pipeline = BrowserActionPipeline()
         self.actions = BrowserActionService(self)
+        self.approval_service = BrowserApprovalService(self)
         self.auth_profiles = BrowserAuthProfileService(self)
         self.bot_challenge = BrowserBotChallengeService()
         self.tabs = BrowserTabService(self)
@@ -436,122 +438,19 @@ class BrowserManager:
         status: str | None = None,
         session_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        approvals = await self.approvals.list(status=status, session_id=session_id)
-        return [approval.model_dump() for approval in approvals]
+        return await self.approval_service.list(status=status, session_id=session_id)
 
     async def get_approval(self, approval_id: str) -> dict[str, Any]:
-        approval = await self.approvals.get(approval_id)
-        return approval.model_dump()
+        return await self.approval_service.get(approval_id)
 
     async def approve(self, approval_id: str, comment: str | None = None) -> dict[str, Any]:
-        approval = await self.approvals.approve(approval_id, comment=comment)
-        session = self.sessions.get(approval.session_id)
-        await self.audit.append(
-            event_type="approval_decision",
-            status="approved",
-            action="approve",
-            session_id=approval.session_id,
-            approval_id=approval.id,
-            details={"kind": approval.kind, "comment": comment},
-        )
-        if session is not None:
-            await self._record_witness_receipt(
-                session,
-                event_type="approval",
-                status="approved",
-                action="approve",
-                action_class="control",
-                approval=WitnessApproval(
-                    required=True,
-                    approval_id=approval.id,
-                    status=approval.status,
-                    reason=approval.reason,
-                ),
-                target={"kind": approval.kind, "action": approval.action.action},
-                metadata={"comment": comment},
-            )
-        return approval.model_dump()
+        return await self.approval_service.approve(approval_id, comment=comment)
 
     async def reject(self, approval_id: str, comment: str | None = None) -> dict[str, Any]:
-        approval = await self.approvals.reject(approval_id, comment=comment)
-        session = self.sessions.get(approval.session_id)
-        await self.audit.append(
-            event_type="approval_decision",
-            status="rejected",
-            action="reject",
-            session_id=approval.session_id,
-            approval_id=approval.id,
-            details={"kind": approval.kind, "comment": comment},
-        )
-        if session is not None:
-            await self._record_witness_receipt(
-                session,
-                event_type="approval",
-                status="rejected",
-                action="reject",
-                action_class="control",
-                approval=WitnessApproval(
-                    required=True,
-                    approval_id=approval.id,
-                    status=approval.status,
-                    reason=approval.reason,
-                ),
-                target={"kind": approval.kind, "action": approval.action.action},
-                metadata={"comment": comment},
-            )
-        return approval.model_dump()
+        return await self.approval_service.reject(approval_id, comment=comment)
 
     async def execute_approval(self, approval_id: str) -> dict[str, Any]:
-        approval = await self.approvals.get(approval_id)
-        if approval.status != "approved":
-            raise PermissionError(f"approval {approval_id} is not approved")
-
-        decision = approval.action
-        if decision.action == "upload":
-            execution = await self.upload(
-                approval.session_id,
-                selector=decision.selector,
-                element_id=decision.element_id,
-                file_path=decision.file_path or "",
-                approved=False,
-                approval_id=approval.id,
-            )
-            latest = await self.approvals.get(approval.id)
-        else:
-            execution = await self.execute_decision(
-                approval.session_id,
-                decision,
-                approval_id=approval.id,
-            )
-            latest = await self.approvals.get(approval.id)
-        await self.audit.append(
-            event_type="approval_executed",
-            status="ok",
-            action="execute_approval",
-            session_id=approval.session_id,
-            approval_id=approval.id,
-            details={"kind": approval.kind, "action": decision.action},
-        )
-        session = self.sessions.get(approval.session_id)
-        if session is not None:
-            await self._record_witness_receipt(
-                session,
-                event_type="approval",
-                status="executed",
-                action="execute_approval",
-                action_class="control",
-                approval=WitnessApproval(
-                    required=True,
-                    approval_id=approval.id,
-                    status=latest.status,
-                    reason=approval.reason,
-                ),
-                target={"kind": approval.kind, "action": decision.action},
-            )
-        return {
-            "approval": latest.model_dump(),
-            "execution": execution,
-        }
+        return await self.approval_service.execute(approval_id)
 
     async def observe(self, session_id: str, limit: int = 40, preset: str = "normal") -> dict[str, Any]:
         return await self.observation.observe(session_id, limit=limit, preset=preset)
