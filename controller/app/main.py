@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from .action_errors import BrowserActionError
@@ -16,34 +16,16 @@ from .app_factory import (
     create_controller_app,
     install_controller_host_middleware,
 )
-from .approvals import ApprovalRequiredError
 from .audit import reset_current_operator, set_current_operator
 from .compliance import VALID_TEMPLATES, apply_compliance_template, write_compliance_manifest
 from .config import get_settings
-from .models import (
-    ClickRequest,
-    CreateSessionRequest,
-    ExecuteActionRequest,
-    HoverRequest,
-    HumanTakeoverRequest,
-    NavigateRequest,
-    ObserveRequest,
-    OpenTabRequest,
-    PressRequest,
-    ScreenshotRequest,
-    ScrollRequest,
-    SelectOptionRequest,
-    TabIndexRequest,
-    TypeRequest,
-    UploadRequest,
-    WaitRequest,
-)
 from .rate_limits import build_rate_limit_key, is_exempt_path
 from .routes.agent import create_agent_router
 from .routes.auth_profiles import create_auth_profiles_router
 from .routes.mcp import create_mcp_router
 from .routes.operations import create_operations_router
 from .routes.session_diagnostics import create_session_diagnostics_router
+from .routes.sessions import create_sessions_router
 from .routes.share import create_share_router
 from .runtime_policy import validate_runtime_policy
 
@@ -86,7 +68,6 @@ orchestrator = services.orchestrator
 job_queue = services.job_queue
 cron_service = services.cron_service
 share_manager = services.share_manager
-vision_targeter = services.vision_targeter
 tool_gateway = services.tool_gateway
 rate_limiter = services.rate_limiter
 metrics = services.metrics
@@ -132,6 +113,7 @@ app.include_router(create_mcp_router(mcp_transport=mcp_transport, tool_gateway=t
 app.include_router(create_agent_router(manager=manager, orchestrator=orchestrator, job_queue=job_queue))
 app.include_router(create_auth_profiles_router(manager=manager, settings=settings))
 app.include_router(create_session_diagnostics_router(manager=manager, settings=settings))
+app.include_router(create_sessions_router(manager=manager))
 app.include_router(create_share_router(manager=manager, share_manager=share_manager))
 app.include_router(
     create_operations_router(
@@ -273,327 +255,3 @@ async def record_http_metrics(request: Request, call_next):
         duration_seconds=duration,
     )
     return response
-
-
-@app.get("/sessions")
-async def list_sessions() -> list[dict]:
-    return await manager.list_sessions()
-
-
-@app.post("/sessions")
-async def create_session(payload: CreateSessionRequest) -> dict:
-    try:
-        return await manager.create_session(
-            name=payload.name,
-            start_url=payload.start_url,
-            storage_state_path=payload.storage_state_path,
-            auth_profile=payload.auth_profile,
-            memory_profile=payload.memory_profile,
-            proxy_persona=payload.proxy_persona,
-            request_proxy_server=payload.proxy_server,
-            request_proxy_username=payload.proxy_username,
-            request_proxy_password=payload.proxy_password,
-            user_agent=payload.user_agent,
-            protection_mode=payload.protection_mode,
-            totp_secret=payload.totp_secret,
-        )
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Not found") from None
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except RuntimeError:
-        raise HTTPException(status_code=409, detail="Conflict") from None
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.get("/sessions/{session_id}")
-async def get_session(session_id: str) -> dict:
-    return await manager.get_session_record(session_id)
-
-
-@app.get("/sessions/{session_id}/observe")
-async def observe(session_id: str, limit: int = 40, preset: str = "normal") -> dict:
-    try:
-        return await manager.observe(session_id, limit=limit, preset=preset)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Unknown session") from None
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/observe")
-async def observe_post(session_id: str, payload: ObserveRequest) -> dict:
-    """Observe with a perception preset. POST body allows richer options than query params."""
-    try:
-        return await manager.observe(session_id, limit=payload.limit, preset=payload.preset)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Unknown session") from None
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/screenshot")
-async def capture_screenshot(session_id: str, payload: ScreenshotRequest) -> dict:
-    return await manager.capture_screenshot(session_id, label=payload.label)
-
-
-@app.get("/sessions/{session_id}/downloads")
-async def list_downloads(session_id: str) -> list[dict]:
-    return await manager.list_downloads(session_id)
-
-
-@app.get("/sessions/{session_id}/tabs")
-async def list_tabs(session_id: str) -> list[dict]:
-    return await manager.list_tabs(session_id)
-
-
-@app.post("/sessions/{session_id}/tabs/activate")
-async def activate_tab(session_id: str, payload: TabIndexRequest) -> dict:
-    try:
-        return await manager.activate_tab(session_id, payload.index)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
-
-
-@app.post("/sessions/{session_id}/tabs/close")
-async def close_tab(session_id: str, payload: TabIndexRequest) -> dict:
-    try:
-        return await manager.close_tab(session_id, payload.index)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
-
-
-@app.post("/sessions/{session_id}/tabs/open")
-async def open_tab(session_id: str, payload: OpenTabRequest) -> dict:
-    try:
-        return await manager.open_tab(session_id, payload.url, payload.activate)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
-
-
-@app.post("/sessions/{session_id}/actions/navigate")
-async def navigate(session_id: str, payload: NavigateRequest) -> dict:
-    try:
-        return await manager.navigate(session_id, payload.url)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/click")
-async def click(session_id: str, payload: ClickRequest) -> dict:
-    try:
-        return await manager.click(
-            session_id,
-            selector=payload.selector,
-            element_id=payload.element_id,
-            x=payload.x,
-            y=payload.y,
-        )
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/type")
-async def type_text(session_id: str, payload: TypeRequest) -> dict:
-    try:
-        return await manager.type(
-            session_id,
-            selector=payload.selector,
-            element_id=payload.element_id,
-            text=payload.text,
-            clear_first=payload.clear_first,
-            sensitive=payload.sensitive,
-        )
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/press")
-async def press_key(session_id: str, payload: PressRequest) -> dict:
-    try:
-        return await manager.press(session_id, payload.key)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/scroll")
-async def scroll(session_id: str, payload: ScrollRequest) -> dict:
-    try:
-        return await manager.scroll(session_id, payload.delta_x, payload.delta_y)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/execute")
-async def execute_action(session_id: str, payload: ExecuteActionRequest) -> dict:
-    try:
-        return await manager.execute_decision(
-            session_id,
-            payload.action,
-            approval_id=payload.approval_id,
-        )
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/upload")
-async def upload(session_id: str, payload: UploadRequest) -> dict:
-    try:
-        return await manager.upload(
-            session_id,
-            selector=payload.selector,
-            element_id=payload.element_id,
-            file_path=payload.file_path,
-            approved=payload.approved,
-            approval_id=payload.approval_id,
-        )
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Not found") from None
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/hover")
-async def hover(session_id: str, payload: HoverRequest) -> dict:
-    try:
-        return await manager.hover(
-            session_id,
-            selector=payload.selector,
-            element_id=payload.element_id,
-            x=payload.x,
-            y=payload.y,
-        )
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/select-option")
-async def select_option(session_id: str, payload: SelectOptionRequest) -> dict:
-    try:
-        return await manager.select_option(
-            session_id,
-            selector=payload.selector,
-            element_id=payload.element_id,
-            value=payload.value,
-            label=payload.label,
-            index=payload.index,
-        )
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/wait")
-async def wait(session_id: str, payload: WaitRequest) -> dict:
-    try:
-        return await manager.wait(session_id, payload.wait_ms)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Unknown session") from None
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/reload")
-async def reload(session_id: str) -> dict:
-    try:
-        return await manager.reload(session_id)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/go-back")
-async def go_back(session_id: str) -> dict:
-    try:
-        return await manager.go_back(session_id)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/actions/go-forward")
-async def go_forward(session_id: str) -> dict:
-    try:
-        return await manager.go_forward(session_id)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-    except ApprovalRequiredError:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-
-@app.post("/sessions/{session_id}/takeover")
-async def request_human_takeover(session_id: str, payload: HumanTakeoverRequest) -> dict:
-    return await manager.request_human_takeover(session_id, payload.reason)
-
-
-@app.delete("/sessions/{session_id}")
-async def close_session(session_id: str) -> dict:
-    return await manager.close_session(session_id)
-
-
-# ── Extended browser endpoints ──────────────────────────────────────────────
-
-@app.post("/sessions/{session_id}/fork")
-async def fork_session(session_id: str, name: str | None = None, start_url: str | None = None) -> dict:
-    try:
-        return await manager.fork_session(session_id, name=name, start_url=start_url)
-    except RuntimeError:
-        raise HTTPException(status_code=409, detail="Conflict") from None
