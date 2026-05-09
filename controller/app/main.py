@@ -11,24 +11,21 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import ValidationError
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import StreamingResponse
 
 from . import events as _events
 from .action_errors import BrowserActionError
-from .agent_jobs import AgentJobQueue
+from .app_factory import (
+    build_controller_services,
+    create_controller_app,
+    install_controller_host_middleware,
+)
 from .approvals import ApprovalRequiredError
-from .audit import get_current_operator, reset_current_operator, set_current_operator
-from .browser_manager import BrowserManager
+from .audit import reset_current_operator, set_current_operator
 from .compliance import VALID_TEMPLATES, apply_compliance_template, write_compliance_manifest
 from .config import get_settings
-from .cron_service import CronService
-from .maintenance import MaintenanceService
-from .mcp_transport import McpHttpTransport
-from .metrics import MetricsRecorder
 from .models import (
     AgentResumeRequest,
     AgentRunRequest,
@@ -56,16 +53,9 @@ from .models import (
     UploadRequest,
     WaitRequest,
 )
-from .orchestrator import BrowserOrchestrator
-from .provider_registry import ProviderRegistry
-from .proxy_personas import ProxyPersonaStore
-from .rate_limits import SlidingWindowRateLimiter, build_rate_limit_key, is_exempt_path
-from .readiness import run_readiness_checks
+from .rate_limits import build_rate_limit_key, is_exempt_path
 from .runtime_policy import validate_runtime_policy
-from .session_share import SessionShareManager
-from .tool_gateway import McpToolGateway
 from .tool_inputs import CreateCronJobInput, CreateProxyPersonaInput, TriggerCronJobInput
-from .vision_target import VisionTargeter
 
 _log_level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
 logging.basicConfig(level=_log_level)
@@ -74,6 +64,10 @@ logger = logging.getLogger(__name__)
 _VERSION = "1.0.6"
 
 _SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _install_controller_host_middleware(application: FastAPI, allowed_hosts: list[str]) -> None:
+    install_controller_host_middleware(application, allowed_hosts)
 
 
 def _is_bearer_token_exempt_path(path: str) -> bool:
@@ -109,66 +103,24 @@ if _compliance_template:
             f"Invalid COMPLIANCE_TEMPLATE={_compliance_template!r}. Valid: {sorted(VALID_TEMPLATES)}"
         )
     _compliance_overrides = apply_compliance_template(settings, _compliance_template)
-proxy_store = ProxyPersonaStore(settings.proxy_persona_file)
-manager = BrowserManager(settings, proxy_store=proxy_store)
-providers = ProviderRegistry(settings)
-orchestrator = BrowserOrchestrator(manager, providers)
-job_queue = AgentJobQueue(
-    orchestrator=orchestrator,
-    store_root=settings.job_store_root,
-    worker_count=settings.agent_job_worker_count,
-    audit_store=manager.audit,
-)
-cron_service = CronService(
-    store_path=settings.cron_store_path,
-    max_jobs=settings.cron_max_jobs,
-    job_queue=job_queue,
-    manager=manager,
-)
-share_manager = SessionShareManager(
-    secret=settings.share_token_secret,
-    ttl_minutes=settings.share_token_ttl_minutes,
-)
-vision_targeter = VisionTargeter.from_settings(settings)
-tool_gateway = McpToolGateway(
-    manager=manager,
-    orchestrator=orchestrator,
-    job_queue=job_queue,
-    tool_profile=settings.mcp_tool_profile,
-    cron_service=cron_service,
-    share_manager=share_manager,
-    proxy_store=proxy_store,
-    vision_targeter=vision_targeter,
-)
-rate_limiter = (
-    SlidingWindowRateLimiter(
-        limit=settings.request_rate_limit_requests,
-        window_seconds=settings.request_rate_limit_window_seconds,
-        max_buckets=settings.request_rate_limit_max_buckets,
-    )
-    if settings.request_rate_limit_enabled
-    else None
-)
-metrics = MetricsRecorder(enabled=settings.metrics_enabled)
-maintenance = MaintenanceService(settings, session_provider=lambda: manager.sessions.values())
-mcp_transport = McpHttpTransport(
-    tool_gateway=tool_gateway,
-    server_name="auto-browser",
-    server_title="Auto Browser MCP",
-    server_version=_VERSION,
-    allowed_origins=settings.mcp_allowed_origin_list,
-    session_store_path=settings.mcp_session_store_path,
-    manager=manager,
-)
-
-
-def _install_controller_host_middleware(application: FastAPI, allowed_hosts: list[str]) -> None:
-    if allowed_hosts:
-        application.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+services = build_controller_services(settings, version=_VERSION)
+proxy_store = services.proxy_store
+manager = services.manager
+providers = services.providers
+orchestrator = services.orchestrator
+job_queue = services.job_queue
+cron_service = services.cron_service
+share_manager = services.share_manager
+vision_targeter = services.vision_targeter
+tool_gateway = services.tool_gateway
+rate_limiter = services.rate_limiter
+metrics = services.metrics
+maintenance = services.maintenance
+mcp_transport = services.mcp_transport
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(application: FastAPI):
     if _compliance_template and _compliance_overrides is not None:
         write_compliance_manifest(
             template_name=_compliance_template,
@@ -188,7 +140,7 @@ async def lifespan(_: FastAPI):
     try:
         from .startup.extensions import register_extensions
 
-        register_extensions(app)
+        register_extensions(application)
     except Exception as exc:
         logger.error("v1.0 extensions init failed (non-fatal): %s", exc)
     try:
@@ -200,26 +152,7 @@ async def lifespan(_: FastAPI):
         await manager.shutdown()
 
 
-app = FastAPI(
-    title="Auto Browser Controller",
-    version=_VERSION,
-    lifespan=lifespan,
-    summary="Visual Auto Browser control plane for LLM workflows.",
-)
-_install_controller_host_middleware(app, settings.controller_allowed_host_patterns)
-
-app.state.browser_manager = manager
-app.state.tool_gateway = tool_gateway
-app.state.settings = settings
-
-app.mount("/artifacts", StaticFiles(directory=settings.artifact_root), name="artifacts")
-
-try:
-    from .routes.extensions import register_all_routers
-
-    register_all_routers(app)
-except Exception as exc:
-    logger.error("v1.0 routers registration failed (non-fatal): %s", exc)
+app = create_controller_app(services=services, version=_VERSION, lifespan=lifespan)
 
 # Legacy operator dashboard aliases now redirect to the auth-bootstrap-aware dashboard.
 @app.get("/ui", include_in_schema=False)
@@ -353,72 +286,6 @@ async def record_http_metrics(request: Request, call_next):
         duration_seconds=duration,
     )
     return response
-
-
-@app.get("/healthz")
-async def healthz() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.get("/readyz")
-async def readyz() -> dict[str, str]:
-    try:
-        await manager.ensure_browser()
-        return {"status": "ready", "environment": settings.environment_name}
-    except Exception:
-        raise HTTPException(status_code=503, detail="Service unavailable") from None
-
-
-@app.get("/version")
-async def get_version() -> dict[str, str]:
-    return {"version": _VERSION}
-
-
-@app.get("/metrics", include_in_schema=False)
-async def get_metrics() -> Response:
-    if not metrics.enabled:
-        raise HTTPException(status_code=404, detail="Metrics disabled")
-    metrics.set_active_sessions(len(manager.sessions))
-    payload, content_type = metrics.render()
-    return Response(content=payload, media_type=content_type)
-
-
-@app.get("/maintenance/status")
-async def get_maintenance_status() -> dict:
-    return {
-        "cleanup_on_startup": settings.cleanup_on_startup,
-        "cleanup_interval_seconds": settings.cleanup_interval_seconds,
-        "artifact_retention_hours": settings.artifact_retention_hours,
-        "upload_retention_hours": settings.upload_retention_hours,
-        "auth_retention_hours": settings.auth_retention_hours,
-        "last_report": maintenance.last_report,
-    }
-
-
-@app.post("/maintenance/cleanup")
-async def run_maintenance_cleanup() -> dict:
-    return await maintenance.run_cleanup()
-
-
-@app.get("/readiness")
-async def get_readiness(mode: str = "normal") -> JSONResponse:
-    if mode not in {"normal", "confidential"}:
-        raise HTTPException(status_code=400, detail="mode must be 'normal' or 'confidential'")
-    report = run_readiness_checks(settings, mode=mode)
-    return JSONResponse(
-        content=report.to_dict(),
-        status_code=200 if report.overall != "fail" else 503,
-    )
-
-
-@app.get("/agent/providers")
-async def list_agent_providers() -> list[dict]:
-    return [item.model_dump() for item in orchestrator.list_providers()]
-
-
-@app.get("/operator")
-async def get_operator() -> dict:
-    return get_current_operator().model_dump()
 
 
 @app.get("/agent/jobs")
