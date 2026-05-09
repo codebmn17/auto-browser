@@ -67,6 +67,12 @@ class MainAuthTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"version": main_module._VERSION})
 
+    def test_deep_health_is_not_exempt_from_bearer_auth(self) -> None:
+        response = self.client.get("/healthz/deep")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
+
     def test_missing_or_invalid_bearer_token_returns_401(self) -> None:
         response = self.client.get("/sessions")
 

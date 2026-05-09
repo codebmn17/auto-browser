@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
@@ -14,6 +17,58 @@ if TYPE_CHECKING:
     from ..maintenance import MaintenanceService
     from ..metrics import MetricsRecorder
     from ..orchestrator import BrowserOrchestrator
+
+logger = logging.getLogger(__name__)
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_DEEP_HEALTH_FIXTURE = _REPO_ROOT / "evals" / "fixtures" / "deep_health.html"
+_DEEP_HEALTH_TIMEOUT_MS = 5_000
+
+
+async def run_deep_health_probe(manager: "BrowserManager") -> dict[str, Any]:
+    started = time.perf_counter()
+    checks: list[dict[str, Any]] = []
+
+    try:
+        fixture_html = _DEEP_HEALTH_FIXTURE.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"deep health fixture unavailable: {_DEEP_HEALTH_FIXTURE}") from exc
+    if 'data-ab-deep-health="ready"' not in fixture_html:
+        raise RuntimeError("deep health fixture missing ready marker")
+    checks.append(
+        {
+            "name": "fixture",
+            "status": "pass",
+            "details": {
+                "path": str(_DEEP_HEALTH_FIXTURE),
+                "bytes": len(fixture_html.encode("utf-8")),
+            },
+        }
+    )
+
+    browser = await manager.ensure_browser()
+    context = await browser.new_context(viewport={"width": 640, "height": 360})
+    try:
+        page = await context.new_page()
+        await page.set_content(
+            fixture_html,
+            wait_until="domcontentloaded",
+            timeout=_DEEP_HEALTH_TIMEOUT_MS,
+        )
+        locator = page.locator("[data-ab-deep-health]")
+        marker = await locator.get_attribute("data-ab-deep-health", timeout=_DEEP_HEALTH_TIMEOUT_MS)
+        text = await locator.inner_text(timeout=_DEEP_HEALTH_TIMEOUT_MS)
+        if marker != "ready" or "Deep health ready" not in text:
+            raise RuntimeError("deep health browser probe did not render the ready marker")
+    finally:
+        await context.close()
+
+    checks.append({"name": "browser_fixture_render", "status": "pass"})
+    return {
+        "status": "ok",
+        "checks": checks,
+        "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+    }
 
 
 def create_system_router(
@@ -30,6 +85,23 @@ def create_system_router(
     @router.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @router.get("/healthz/deep")
+    async def healthz_deep() -> JSONResponse:
+        try:
+            payload = await run_deep_health_probe(manager)
+        except Exception as exc:
+            logger.warning("deep health probe failed: %s", exc, exc_info=True)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "unhealthy",
+                    "environment": settings.environment_name,
+                    "error": str(exc),
+                },
+            )
+        payload["environment"] = settings.environment_name
+        return JSONResponse(content=payload)
 
     @router.get("/readyz")
     async def readyz() -> dict[str, str]:

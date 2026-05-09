@@ -32,6 +32,51 @@ import app.main as main_module
 from app.models import AgentStepResult, ProviderInfo
 
 
+class _DeepHealthLocator:
+    async def get_attribute(self, name: str, *, timeout: int) -> str | None:
+        assert name == "data-ab-deep-health"
+        assert timeout > 0
+        return "ready"
+
+    async def inner_text(self, *, timeout: int) -> str:
+        assert timeout > 0
+        return "Deep health ready"
+
+
+class _DeepHealthPage:
+    def __init__(self) -> None:
+        self.content: str | None = None
+
+    async def set_content(self, html: str, *, wait_until: str, timeout: int) -> None:
+        assert wait_until == "domcontentloaded"
+        assert timeout > 0
+        self.content = html
+
+    def locator(self, selector: str) -> _DeepHealthLocator:
+        assert selector == "[data-ab-deep-health]"
+        return _DeepHealthLocator()
+
+
+class _DeepHealthContext:
+    def __init__(self) -> None:
+        self.closed = False
+        self.page = _DeepHealthPage()
+
+    async def new_page(self) -> _DeepHealthPage:
+        return self.page
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _DeepHealthBrowser:
+    def __init__(self) -> None:
+        self.context = _DeepHealthContext()
+
+    async def new_context(self, **_: object) -> _DeepHealthContext:
+        return self.context
+
+
 class AgentHttpTests(unittest.TestCase):
     def setUp(self) -> None:
         self.stack = ExitStack()
@@ -104,6 +149,28 @@ class AgentHttpTests(unittest.TestCase):
         response = self.client.get("/readiness?mode=invalid")
 
         self.assertEqual(response.status_code, 400)
+
+    def test_deep_health_runs_browser_fixture_probe(self) -> None:
+        browser = _DeepHealthBrowser()
+
+        with patch.object(main_module.manager, "ensure_browser", new=AsyncMock(return_value=browser)):
+            response = self.client.get("/healthz/deep")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["environment"], main_module.settings.environment_name)
+        self.assertEqual([check["status"] for check in body["checks"]], ["pass", "pass"])
+        self.assertIn('data-ab-deep-health="ready"', browser.context.page.content)
+        self.assertTrue(browser.context.closed)
+
+    def test_deep_health_returns_503_when_probe_fails(self) -> None:
+        with patch.object(main_module.manager, "ensure_browser", new=AsyncMock(side_effect=RuntimeError("down"))):
+            response = self.client.get("/healthz/deep")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["status"], "unhealthy")
+        self.assertIn("down", response.json()["error"])
 
     def test_agent_step_returns_success_payload_with_mock_provider(self) -> None:
         step = AsyncMock(
