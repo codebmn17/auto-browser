@@ -5,7 +5,6 @@ import fnmatch
 import inspect
 import json
 import logging
-import os
 import random
 import re
 import shutil
@@ -31,7 +30,12 @@ from .approvals import ApprovalRequiredError, ApprovalStore
 from .artifacts import SessionArtifactService
 from .audit import AuditStore, get_current_operator
 from .auth_state import AuthStateManager
-from .browser.services import BrowserAuthProfileService, BrowserDiagnosticsService, BrowserTabService
+from .browser.services import (
+    BrowserAuthProfileService,
+    BrowserDiagnosticsService,
+    BrowserTabService,
+    BrowserUploadService,
+)
 from .browser_scripts import (
     ACTIVE_ELEMENT_SCRIPT,
     INTERACTABLES_SCRIPT,
@@ -132,6 +136,7 @@ class BrowserManager:
         self.action_pipeline = BrowserActionPipeline()
         self.auth_profiles = BrowserAuthProfileService(self)
         self.tabs = BrowserTabService(self)
+        self.uploads = BrowserUploadService(self)
 
         Path(self.settings.artifact_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.upload_root).mkdir(parents=True, exist_ok=True)
@@ -1627,38 +1632,14 @@ class BrowserManager:
         selector: str | None = None,
         element_id: str | None = None,
     ) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        safe_path = self._safe_upload_path(file_path, session=session)
-        approval = await self._require_decision_approval(
+        return await self.uploads.upload(
             session_id,
-            BrowserActionDecision(
-                action="upload",
-                reason="Manual upload request",
-                selector=selector,
-                element_id=element_id,
-                file_path=file_path,
-                risk_category="upload",
-            ),
+            file_path=file_path,
+            approved=approved,
             approval_id=approval_id,
-            fallback_reason="Upload actions require approval",
+            selector=selector,
+            element_id=element_id,
         )
-
-        target = self._resolve_target(selector=selector, element_id=element_id)
-
-        async def operation() -> None:
-            locator = session.page.locator(target["selector"]).first
-            await locator.set_input_files(str(safe_path))
-            await self._settle(session.page)
-
-        result = await self._run_action(
-            session,
-            "upload",
-            {**target, "file_path": str(safe_path), "approved": bool(approval), "approval_id": approval_id},
-            operation,
-        )
-        if approval is not None:
-            await self.approvals.mark_executed(approval.id)
-        return result
 
     async def save_storage_state(self, session_id: str, path: str) -> dict[str, Any]:
         return await self.auth_profiles.save_storage_state(session_id, path)
@@ -2660,56 +2641,11 @@ class BrowserManager:
         raise ValueError("Provide selector, element_id, or x+y coordinates")
 
     def _safe_upload_path(self, file_path: str, *, session: BrowserSession | None = None) -> Path:
-        root = Path(self.settings.upload_root).resolve()
-        allowed_roots = [root]
-        if session is not None:
-            allowed_roots.append(session.upload_dir.resolve())
-
-        raw_path = os.fspath(file_path)
-        if os.path.isabs(file_path):
-            candidate_str = os.path.realpath(raw_path)
-            for allowed_root in allowed_roots:
-                root_str = os.path.realpath(os.fspath(allowed_root))
-                root_prefix = root_str if root_str.endswith(os.sep) else root_str + os.sep
-                if candidate_str.startswith(root_prefix):
-                    break
-            else:
-                raise PermissionError("file_path must stay inside upload root")
-            if not os.path.exists(candidate_str):
-                raise FileNotFoundError(candidate_str)
-            return Path(candidate_str)
-        else:
-            preferred_roots: list[Path] = []
-            if session is not None:
-                preferred_roots.append(session.upload_dir.resolve())
-            preferred_roots.append(root)
-
-            for candidate_root in preferred_roots:
-                root_str = os.path.realpath(os.fspath(candidate_root))
-                root_prefix = root_str if root_str.endswith(os.sep) else root_str + os.sep
-                candidate_str = os.path.realpath(os.path.join(root_str, raw_path))
-                if not candidate_str.startswith(root_prefix):
-                    raise PermissionError("file_path must stay inside upload root")
-
-                if os.path.exists(candidate_str):
-                    return Path(candidate_str)
-            else:
-                root_str = os.path.realpath(os.fspath(preferred_roots[0]))
-                root_prefix = root_str if root_str.endswith(os.sep) else root_str + os.sep
-                candidate_str = os.path.realpath(os.path.join(root_str, raw_path))
-                if not candidate_str.startswith(root_prefix):
-                    raise PermissionError("file_path must stay inside upload root")
-
-        if not os.path.exists(candidate_str):
-            raise FileNotFoundError(candidate_str)
-        return Path(candidate_str)
+        return self.uploads.safe_path(file_path, session=session)
 
     @staticmethod
     def _path_is_contained_by(candidate: Path, root: Path) -> bool:
-        root_str = os.path.normcase(os.path.realpath(os.fspath(root)))
-        candidate_str = os.path.normcase(os.path.realpath(os.fspath(candidate)))
-        root_prefix = root_str if root_str.endswith(os.sep) else root_str + os.sep
-        return candidate_str == root_str or candidate_str.startswith(root_prefix)
+        return BrowserUploadService.path_is_contained_by(candidate, root)
 
     def _safe_session_auth_path(
         self,
