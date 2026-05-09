@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from pydantic import BaseModel
@@ -91,6 +92,7 @@ class McpToolGateway:
         proxy_store=None,
         vision_targeter=None,
         harness_service=None,
+        metrics=None,
     ):
         self.manager = manager
         self.orchestrator = orchestrator
@@ -101,6 +103,7 @@ class McpToolGateway:
         self.proxy_store = proxy_store
         self.vision_targeter = vision_targeter
         self.harness_service = harness_service
+        self.metrics = metrics
         self._registry = ToolRegistry(
             tool_profile=self.tool_profile,
             experimental_enabled=self._experimental_enabled,
@@ -117,6 +120,22 @@ class McpToolGateway:
         return self._registry.list_tools()
 
     async def call_tool(self, payload: McpToolCallRequest) -> McpToolCallResponse:
+        started = time.perf_counter()
+        metric_tool = payload.name if self._registry.get(payload.name) is not None else "__unknown__"
+        status = "error"
+        try:
+            response = await self._call_tool(payload)
+            status = "error" if response.isError else "ok"
+            return response
+        finally:
+            if self.metrics is not None:
+                self.metrics.record_mcp_tool_call(
+                    tool=metric_tool,
+                    status=status,
+                    duration_seconds=time.perf_counter() - started,
+                )
+
+    async def _call_tool(self, payload: McpToolCallRequest) -> McpToolCallResponse:
         spec = self._registry.get(payload.name)
         if spec is None:
             return self._error_response(f"Unknown tool: {payload.name}")

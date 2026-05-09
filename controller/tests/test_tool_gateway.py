@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 from app.action_errors import BrowserActionError
 from app.approvals import ApprovalRequiredError
 from app.memory_manager import MemoryProfile
+from app.metrics import MetricsRecorder
 from app.models import ApprovalRecord, BrowserActionDecision, McpToolCallRequest, ProviderInfo
 from app.tool_gateway import CreateSessionRequest, McpToolGateway, ToolRegistry, ToolSpec
 from app.tool_inputs import EmptyInput
@@ -252,6 +253,26 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual({tool["name"] for tool in registry.list_tools()}, {"test.one", "test.two"})
+
+    async def test_gateway_records_bounded_mcp_tool_metrics(self) -> None:
+        metrics = MetricsRecorder()
+        gateway = McpToolGateway(
+            manager=self.manager,
+            orchestrator=self.orchestrator,
+            job_queue=self.job_queue,
+            metrics=metrics,
+        )
+
+        ok_response = await gateway.call_tool(McpToolCallRequest(name="browser.list_sessions", arguments={}))
+        unknown_response = await gateway.call_tool(McpToolCallRequest(name="browser.not_real", arguments={}))
+
+        payload, _ = metrics.render()
+        text = payload.decode("utf-8")
+        self.assertFalse(ok_response.isError)
+        self.assertTrue(unknown_response.isError)
+        self.assertIn('auto_browser_mcp_tool_calls_total{status="ok",tool="browser.list_sessions"} 1.0', text)
+        self.assertIn('auto_browser_mcp_tool_calls_total{status="error",tool="__unknown__"} 1.0', text)
+        self.assertNotIn("browser.not_real", text)
 
     async def test_full_profile_keeps_internal_tools_available(self) -> None:
         names = {tool["name"] for tool in self.full_gateway.list_tools()}

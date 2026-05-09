@@ -70,6 +70,7 @@ def build_controller_services(settings: Settings, *, version: str) -> Controller
         ttl_minutes=settings.share_token_ttl_minutes,
     )
     vision_targeter = VisionTargeter.from_settings(settings)
+    metrics = MetricsRecorder(enabled=settings.metrics_enabled)
     tool_gateway = McpToolGateway(
         manager=manager,
         orchestrator=orchestrator,
@@ -79,6 +80,7 @@ def build_controller_services(settings: Settings, *, version: str) -> Controller
         share_manager=share_manager,
         proxy_store=proxy_store,
         vision_targeter=vision_targeter,
+        metrics=metrics,
     )
     rate_limiter = (
         SlidingWindowRateLimiter(
@@ -89,7 +91,6 @@ def build_controller_services(settings: Settings, *, version: str) -> Controller
         if settings.request_rate_limit_enabled
         else None
     )
-    metrics = MetricsRecorder(enabled=settings.metrics_enabled)
     maintenance = MaintenanceService(settings, session_provider=lambda: manager.sessions.values())
     mcp_transport = McpHttpTransport(
         tool_gateway=tool_gateway,
