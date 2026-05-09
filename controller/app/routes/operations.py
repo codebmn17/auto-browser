@@ -13,19 +13,10 @@ from ..tool_inputs import CreateCronJobInput, CreateProxyPersonaInput, TriggerCr
 def create_operations_router(
     *,
     manager: Any,
-    job_queue: Any,
     proxy_store: Any,
     cron_service: Any,
 ) -> APIRouter:
     router = APIRouter()
-
-    @router.get("/agent/jobs")
-    async def list_agent_jobs(status: str | None = None, session_id: str | None = None) -> list[dict[str, Any]]:
-        return await job_queue.list_jobs(status=status, session_id=session_id)
-
-    @router.get("/agent/jobs/{job_id}")
-    async def get_agent_job(job_id: str) -> dict[str, Any]:
-        return await job_queue.get_job(job_id)
 
     @router.get("/remote-access")
     async def get_remote_access(session_id: str | None = None) -> dict[str, Any]:
