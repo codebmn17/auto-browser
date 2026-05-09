@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .contracts import TaskContract
 from .converge import ConvergenceDecision, ConvergenceDetector
+from .drift import SkillDriftMonitor
 from .induce import SkillCandidate, SkillInducer
 from .register import SkillStagingRegistry
 from .trace import TraceEnvelope, TraceRecorder
@@ -101,6 +102,7 @@ class HarnessService:
         self.model_tiers = {key: value for key, value in (model_tiers or {}).items() if value}
         self.inducer = SkillInducer(self.store.staging_root, signer=signer)
         self.registry = SkillStagingRegistry(self.store.staging_root)
+        self.drift_monitor = SkillDriftMonitor(self.registry, verifier=self.verifier)
 
     async def start_convergence(
         self,
@@ -258,6 +260,12 @@ class HarnessService:
 
     def get_candidate(self, skill_id: str) -> dict[str, Any]:
         return self.registry.get_candidate(skill_id).model_dump(mode="json")
+
+    async def check_drift(self, skill_id: str) -> dict[str, Any]:
+        return (await self.drift_monitor.check_candidate(skill_id)).model_dump(mode="json")
+
+    async def check_all_drifts(self) -> list[dict[str, Any]]:
+        return [item.model_dump(mode="json") for item in await self.drift_monitor.check_all()]
 
     def graduate(self, run_id: str) -> dict[str, Any]:
         record = self.store.get(run_id)

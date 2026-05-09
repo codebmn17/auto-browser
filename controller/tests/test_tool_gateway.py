@@ -111,6 +111,8 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             list_runs=lambda status=None, limit=50: [{"id": "run-1", "status": status or "converged", "limit": limit}],
             list_candidates=lambda: [{"skill_id": "candidate-1"}],
             get_candidate=lambda skill_id: {"skill_id": skill_id},
+            check_drift=AsyncMock(return_value={"skill_id": "candidate-1", "status": "healthy"}),
+            check_all_drifts=AsyncMock(return_value=[{"skill_id": "candidate-1", "status": "healthy"}]),
             graduate=lambda run_id: {"status": "staged", "candidate": {"skill_id": run_id}},
         )
         self.gateway = McpToolGateway(
@@ -296,6 +298,8 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("harness.list_runs", names)
         self.assertIn("harness.list_candidates", names)
         self.assertIn("harness.get_candidate", names)
+        self.assertIn("harness.check_drift", names)
+        self.assertIn("harness.check_all_drifts", names)
         self.assertIn("harness.graduate", names)
         self.assertNotIn("social.post", names)
         self.assertNotIn("social.dm", names)
@@ -353,6 +357,12 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         candidate_response = await self.full_gateway.call_tool(
             McpToolCallRequest(name="harness.get_candidate", arguments={"skill_id": "candidate-1"})
         )
+        drift_response = await self.full_gateway.call_tool(
+            McpToolCallRequest(name="harness.check_drift", arguments={"skill_id": "candidate-1"})
+        )
+        all_drift_response = await self.full_gateway.call_tool(
+            McpToolCallRequest(name="harness.check_all_drifts", arguments={})
+        )
 
         self.assertFalse(response.isError)
         self.assertEqual(response.structuredContent["status"], "converged")
@@ -364,7 +374,13 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidates_response.structuredContent[0]["skill_id"], "candidate-1")
         self.assertFalse(candidate_response.isError)
         self.assertEqual(candidate_response.structuredContent["skill_id"], "candidate-1")
+        self.assertFalse(drift_response.isError)
+        self.assertEqual(drift_response.structuredContent["status"], "healthy")
+        self.assertFalse(all_drift_response.isError)
+        self.assertEqual(all_drift_response.structuredContent[0]["status"], "healthy")
         self.harness_service.start_convergence.assert_awaited_once()
+        self.harness_service.check_drift.assert_awaited_once_with("candidate-1")
+        self.harness_service.check_all_drifts.assert_awaited_once_with()
         contract = self.harness_service.start_convergence.await_args.args[0]
         self.assertEqual(contract.id, "task-1")
 

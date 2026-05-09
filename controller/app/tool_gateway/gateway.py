@@ -447,6 +447,12 @@ class McpToolGateway:
     async def _harness_get_candidate(self, payload: HarnessSkillIdInput) -> dict[str, Any]:
         return self._get_harness_service().get_candidate(payload.skill_id)
 
+    async def _harness_check_drift(self, payload: HarnessSkillIdInput) -> dict[str, Any]:
+        return await self._get_harness_service().check_drift(payload.skill_id)
+
+    async def _harness_check_all_drifts(self, _: EmptyInput) -> list[dict[str, Any]]:
+        return await self._get_harness_service().check_all_drifts()
+
     async def _harness_graduate(self, payload: HarnessGraduateInput) -> dict[str, Any]:
         return self._get_harness_service().graduate(payload.run_id)
 

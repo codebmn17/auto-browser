@@ -84,6 +84,20 @@ def register(registry, gateway):
             profiles=("full",),
         ),
         ToolSpec(
+            name="harness.check_drift",
+            description="Re-run verifier checks for one staged skill candidate and write drift.json.",
+            input_model=HarnessSkillIdInput,
+            handler=gateway._harness_check_drift,
+            profiles=("full",),
+        ),
+        ToolSpec(
+            name="harness.check_all_drifts",
+            description="Run drift checks for all staged skill candidates.",
+            input_model=EmptyInput,
+            handler=gateway._harness_check_all_drifts,
+            profiles=("full",),
+        ),
+        ToolSpec(
             name="harness.graduate",
             description=(
                 "Return the staged candidate for a converged run. "
