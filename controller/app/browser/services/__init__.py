@@ -7,6 +7,7 @@ from .bot_challenge import BrowserBotChallengeService
 from .diagnostics import BrowserDiagnosticsService
 from .observation import BrowserObservationService
 from .remote_access import BrowserRemoteAccessService
+from .runtime import BrowserRuntimeService
 from .sessions import BrowserSessionService
 from .tabs import BrowserTabService
 from .uploads import BrowserUploadService
@@ -20,6 +21,7 @@ __all__ = [
     "BrowserDiagnosticsService",
     "BrowserObservationService",
     "BrowserRemoteAccessService",
+    "BrowserRuntimeService",
     "BrowserSessionService",
     "BrowserTabService",
     "BrowserUploadService",

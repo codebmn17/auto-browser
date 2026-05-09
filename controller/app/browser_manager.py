@@ -27,6 +27,7 @@ from .browser.services import (
     BrowserDiagnosticsService,
     BrowserObservationService,
     BrowserRemoteAccessService,
+    BrowserRuntimeService,
     BrowserSessionService,
     BrowserTabService,
     BrowserUploadService,
@@ -128,6 +129,7 @@ class BrowserManager:
         self.uploads = BrowserUploadService(self)
         self.observation = BrowserObservationService(self)
         self.session_lifecycle = BrowserSessionService(self)
+        self.runtime = BrowserRuntimeService(self)
         self.witness_bridge = BrowserWitnessService(self)
         self.remote_access = BrowserRemoteAccessService(self)
 
@@ -257,103 +259,19 @@ class BrowserManager:
         await self.session_store.shutdown()
 
     async def ensure_browser(self) -> Browser:
-        async with self._browser_lock:
-            if self.browser is not None and self.browser.is_connected():
-                return self.browser
-            if self.playwright is None:
-                raise RuntimeError("Playwright not started")
-
-            # CDP attach mode: connect to an already-running Chrome instance
-            if self.settings.cdp_connect_url:
-                logger.info("connecting to existing Chrome via CDP at %s", self.settings.cdp_connect_url)
-                self.browser = await self.playwright.chromium.connect_over_cdp(
-                    self.settings.cdp_connect_url
-                )
-                logger.info("CDP attach succeeded")
-                return self.browser
-
-            self.browser = await self._connect_browser(
-                self._resolve_browser_ws_endpoint,
-                failure_context=(
-                    "Unable to connect to browser node via Playwright server. "
-                    f"Checked ws endpoint file {self.settings.browser_ws_endpoint_file} "
-                    f"and direct endpoint {self.settings.browser_ws_endpoint or '<not configured>'}."
-                ),
-            )
-            return self.browser
+        return await self.runtime.ensure_browser()
 
     async def cdp_attach(self, cdp_url: str) -> dict[str, Any]:
-        """Attach to an existing Chrome/Chromium instance via CDP URL.
-
-        This replaces the current shared browser connection. Sessions created
-        after calling this will use pages from the attached browser.
-        """
-        if self.playwright is None:
-            raise RuntimeError("Playwright not started")
-        async with self._browser_lock:
-            browser = await self.playwright.chromium.connect_over_cdp(cdp_url)
-            self.browser = browser
-            logger.info("attached to Chrome via CDP at %s", cdp_url)
-            await self.audit.append(
-                event_type="cdp_attach",
-                status="ok",
-                action="cdp_attach",
-                session_id=None,
-                details={"cdp_url": cdp_url},
-            )
-            return {
-                "attached": True,
-                "cdp_url": cdp_url,
-                "browser_version": browser.version,
-            }
+        return await self.runtime.cdp_attach(cdp_url)
 
     async def _connect_browser(self, ws_target_factory, *, failure_context: str) -> Browser:
-        if self.playwright is None:
-            raise RuntimeError("Playwright not started")
-
-        last_error: Exception | None = None
-        for attempt in range(1, self.settings.connect_retries + 1):
-            try:
-                ws_target = await ws_target_factory()
-                browser = await self.playwright.chromium.connect(ws_target)
-                logger.info(
-                    "connected to browser node on attempt %s via playwright endpoint %s",
-                    attempt,
-                    ws_target,
-                )
-                return browser
-            except Exception as exc:  # pragma: no cover - depends on external service
-                last_error = exc
-                await asyncio.sleep(self.settings.connect_retry_delay_seconds)
-        raise RuntimeError(failure_context) from last_error
+        return await self.runtime.connect_browser(ws_target_factory, failure_context=failure_context)
 
     async def _resolve_browser_ws_endpoint(self) -> str:
-        ws_endpoint_file = Path(self.settings.browser_ws_endpoint_file)
-        if ws_endpoint_file.exists():
-            ws_endpoint = ws_endpoint_file.read_text(encoding="utf-8").strip()
-            if ws_endpoint:
-                return ws_endpoint
-        if self.settings.browser_ws_endpoint:
-            return self.settings.browser_ws_endpoint
-        raise FileNotFoundError(f"missing playwright ws endpoint file: {ws_endpoint_file}")
+        return await self.runtime.resolve_browser_ws_endpoint()
 
     async def _acquire_session_browser(self, session_id: str) -> tuple[Browser, IsolatedBrowserRuntime | None]:
-        if self.settings.session_isolation_mode != "docker_ephemeral":
-            return await self.ensure_browser(), None
-
-        runtime = await self.runtime_provisioner.provision(session_id)
-        try:
-            browser = await self._connect_browser(
-                lambda: asyncio.sleep(0, result=runtime.ws_endpoint),
-                failure_context=(
-                    "Unable to connect to isolated browser node via Playwright server. "
-                    f"Checked isolated endpoint file {runtime.ws_endpoint_file}."
-                ),
-            )
-            return browser, runtime
-        except Exception:
-            await self.runtime_provisioner.release(runtime)
-            raise
+        return await self.runtime.acquire_session_browser(session_id)
 
     async def list_sessions(self) -> list[dict[str, Any]]:
         return await self.session_lifecycle.list()
