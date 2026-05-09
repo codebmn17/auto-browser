@@ -190,7 +190,7 @@ class McpHttpTransport:
             tool_response = await self.tool_gateway.call_tool(tool_request)
             return self._json_result_response(
                 request_id,
-                tool_response.model_dump(exclude_none=True),
+                tool_response.model_dump(exclude_none=True, by_alias=True),
                 headers=self._session_headers(session),
             )
 

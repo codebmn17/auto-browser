@@ -822,7 +822,7 @@ async def list_mcp_tools() -> list[dict]:
 
 @app.post("/mcp/tools/call")
 async def call_mcp_tool(payload: McpToolCallRequest) -> dict:
-    return (await tool_gateway.call_tool(payload)).model_dump()
+    return (await tool_gateway.call_tool(payload)).model_dump(exclude_none=True, by_alias=True)
 
 
 @app.get("/sessions/{session_id}/events")

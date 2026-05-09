@@ -126,14 +126,25 @@ class McpToolGateway:
         try:
             response = await self._call_tool(payload)
             status = "error" if response.isError else "ok"
+            duration_seconds = time.perf_counter() - started
+            response.meta = self._tool_response_meta(
+                existing=response.meta,
+                tool=metric_tool,
+                status=status,
+                duration_seconds=duration_seconds,
+            )
             return response
         finally:
             if self.metrics is not None:
-                self.metrics.record_mcp_tool_call(
-                    tool=metric_tool,
-                    status=status,
-                    duration_seconds=time.perf_counter() - started,
-                )
+                duration_seconds = time.perf_counter() - started
+                try:
+                    self.metrics.record_mcp_tool_call(
+                        tool=metric_tool,
+                        status=status,
+                        duration_seconds=duration_seconds,
+                    )
+                except Exception:
+                    logger.warning("failed to record MCP tool metrics for %s", metric_tool, exc_info=True)
 
     async def _call_tool(self, payload: McpToolCallRequest) -> McpToolCallResponse:
         spec = self._registry.get(payload.name)
@@ -199,6 +210,20 @@ class McpToolGateway:
             structuredContent={"error": message},
             isError=True,
         )
+
+    @staticmethod
+    def _tool_response_meta(
+        *,
+        existing: dict[str, Any] | None,
+        tool: str,
+        status: str,
+        duration_seconds: float,
+    ) -> dict[str, Any]:
+        meta = dict(existing or {})
+        meta.setdefault("tool", tool)
+        meta.setdefault("status", status)
+        meta.setdefault("latency_ms", round(duration_seconds * 1000, 2))
+        return meta
 
     @staticmethod
     def _pop_policy_profile(spec: ToolSpec, raw_arguments: dict[str, Any]) -> str:

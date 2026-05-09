@@ -34,6 +34,7 @@ class McpTransportTests(unittest.TestCase):
                     content=[McpToolCallContent(text='{"session_id":"session-1"}')],
                     structuredContent={"session_id": "session-1", "status": "ok"},
                     isError=False,
+                    meta={"latency_ms": 3.5, "status": "ok", "tool": "browser.observe"},
                 )
             ),
         )
@@ -138,6 +139,7 @@ class McpTransportTests(unittest.TestCase):
         )
         self.assertEqual(call_response.status_code, 200)
         self.assertEqual(call_response.json()["result"]["structuredContent"]["session_id"], "session-1")
+        self.assertEqual(call_response.json()["result"]["_meta"]["tool"], "browser.observe")
         self.gateway.call_tool.assert_awaited_once()
         called = self.gateway.call_tool.await_args.args[0]
         self.assertEqual(called.name, "browser.observe")
