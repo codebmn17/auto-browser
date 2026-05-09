@@ -5,13 +5,12 @@ import hmac
 import html as _html
 import logging
 import os
-import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.responses import StreamingResponse
 
 from . import events as _events
@@ -31,13 +30,10 @@ from .models import (
     ExecuteActionRequest,
     HoverRequest,
     HumanTakeoverRequest,
-    ImportAuthProfileRequest,
     NavigateRequest,
     ObserveRequest,
     OpenTabRequest,
     PressRequest,
-    SaveAuthProfileRequest,
-    SaveStorageStateRequest,
     ScreenshotRequest,
     ScrollRequest,
     SelectOptionRequest,
@@ -48,7 +44,9 @@ from .models import (
     WaitRequest,
 )
 from .rate_limits import build_rate_limit_key, is_exempt_path
+from .routes._utils import require_safe_segment
 from .routes.agent import create_agent_router
+from .routes.auth_profiles import create_auth_profiles_router
 from .routes.mcp import create_mcp_router
 from .routes.operations import create_operations_router
 from .runtime_policy import validate_runtime_policy
@@ -58,9 +56,6 @@ logging.basicConfig(level=_log_level)
 logger = logging.getLogger(__name__)
 
 _VERSION = "1.0.6"
-
-_SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-
 
 def _install_controller_host_middleware(application: FastAPI, allowed_hosts: list[str]) -> None:
     install_controller_host_middleware(application, allowed_hosts)
@@ -77,18 +72,6 @@ def _is_bearer_token_exempt_path(path: str) -> bool:
         "/ui",
         "/ui/",
     }
-
-
-def _require_safe_segment(value: str, *, field: str) -> str:
-    """Validate that *value* is a single safe path segment (no traversal).
-
-    Accepts only characters that can't form path traversal sequences so the
-    result is safe to join with a trusted base directory.
-    """
-    if not isinstance(value, str) or not _SAFE_PATH_SEGMENT.fullmatch(value):
-        raise HTTPException(status_code=400, detail=f"Invalid {field}")
-    return value
-
 
 settings = get_settings()
 _compliance_template = settings.compliance_template.upper().strip() if settings.compliance_template else None
@@ -151,6 +134,7 @@ async def lifespan(application: FastAPI):
 app = create_controller_app(services=services, version=_VERSION, lifespan=lifespan)
 app.include_router(create_mcp_router(mcp_transport=mcp_transport, tool_gateway=tool_gateway))
 app.include_router(create_agent_router(manager=manager, orchestrator=orchestrator, job_queue=job_queue))
+app.include_router(create_auth_profiles_router(manager=manager, settings=settings))
 app.include_router(
     create_operations_router(
         manager=manager,
@@ -332,24 +316,6 @@ async def create_session(payload: CreateSessionRequest) -> dict:
 @app.get("/sessions/{session_id}")
 async def get_session(session_id: str) -> dict:
     return await manager.get_session_record(session_id)
-
-
-@app.get("/sessions/{session_id}/auth-state")
-async def get_session_auth_state(session_id: str) -> dict:
-    return await manager.get_auth_state_info(session_id)
-
-
-@app.get("/auth-profiles")
-async def list_auth_profiles() -> list[dict]:
-    return await manager.list_auth_profiles()
-
-
-@app.get("/auth-profiles/{profile_name}")
-async def get_auth_profile(profile_name: str) -> dict:
-    try:
-        return await manager.get_auth_profile(profile_name)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
 
 
 @app.get("/sessions/{session_id}/observe")
@@ -615,24 +581,6 @@ async def go_forward(session_id: str) -> dict:
         raise HTTPException(status_code=500, detail="Internal error") from None
 
 
-@app.post("/sessions/{session_id}/storage-state")
-async def save_storage_state(session_id: str, payload: SaveStorageStateRequest) -> dict:
-    try:
-        return await manager.save_storage_state(session_id, payload.path)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-
-
-@app.post("/sessions/{session_id}/auth-profiles")
-async def save_auth_profile(session_id: str, payload: SaveAuthProfileRequest) -> dict:
-    try:
-        return await manager.save_auth_profile(session_id, payload.profile_name)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request") from None
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not permitted") from None
-
-
 @app.post("/sessions/{session_id}/takeover")
 async def request_human_takeover(session_id: str, payload: HumanTakeoverRequest) -> dict:
     return await manager.request_human_takeover(session_id, payload.reason)
@@ -691,7 +639,7 @@ async def screenshot_compare(session_id: str) -> dict:
 @app.get("/sessions/{session_id}/replay", response_class=HTMLResponse)
 async def session_replay(session_id: str) -> HTMLResponse:
     """Session replay — HTML viewer showing screenshots, audit events, and approvals."""
-    safe_session_id = _require_safe_segment(session_id, field="session_id")
+    safe_session_id = require_safe_segment(session_id, field="session_id")
 
     # Gather screenshots, constrained to the artifact root.
     artifact_root = Path(settings.artifact_root).resolve()
@@ -792,50 +740,6 @@ async def session_replay(session_id: str) -> HTMLResponse:
 </body>
 </html>"""
     return HTMLResponse(content=body)
-
-
-@app.get("/auth-profiles/{profile_name}/export")
-async def export_auth_profile(profile_name: str):
-    """Download an auth profile as a .tar.gz archive."""
-    safe_profile_name = _require_safe_segment(profile_name, field="profile_name")
-    try:
-        result = await manager.export_auth_profile(safe_profile_name)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Not found") from None
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
-
-    auth_root = Path(settings.auth_root).resolve()
-    archive_name = str(result["archive_name"])
-    archive_path: Path | None = None
-    if auth_root.is_dir():
-        for child in auth_root.iterdir():
-            if child.name == archive_name and child.is_file():
-                candidate = child.resolve()
-                if candidate.is_relative_to(auth_root):
-                    archive_path = candidate
-                break
-    if archive_path is None:
-        raise HTTPException(status_code=500, detail="archive file not found after export")
-
-    return FileResponse(
-        path=str(archive_path),
-        media_type="application/gzip",
-        filename=archive_path.name,
-    )
-
-
-@app.post("/auth-profiles/import")
-async def import_auth_profile(payload: ImportAuthProfileRequest) -> dict:
-    """Import an auth profile from a .tar.gz archive on the server filesystem."""
-    try:
-        return await manager.import_auth_profile(payload.archive_path, overwrite=payload.overwrite)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Not found") from None
-    except FileExistsError:
-        raise HTTPException(status_code=409, detail="Conflict") from None
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error") from None
 
 
 @app.delete("/sessions/{session_id}")
