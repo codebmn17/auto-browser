@@ -184,7 +184,7 @@ class AgentHttpTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["status"], "unhealthy")
-        self.assertIn("down", response.json()["error"])
+        self.assertEqual(response.json()["error"], "deep_health_probe_failed")
 
     def test_agent_step_returns_success_payload_with_mock_provider(self) -> None:
         step = AsyncMock(

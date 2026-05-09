@@ -108,7 +108,7 @@ def create_system_router(
                 content={
                     "status": "unhealthy",
                     "environment": settings.environment_name,
-                    "error": str(exc),
+                    "error": "deep_health_probe_failed",
                 },
             )
         payload["environment"] = settings.environment_name
