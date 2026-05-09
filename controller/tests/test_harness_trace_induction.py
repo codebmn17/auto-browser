@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -41,6 +43,15 @@ class TraceRecorderTests(unittest.TestCase):
             self.assertIn("model_decisions", trace.evidence)
             self.assertTrue((Path(tmp) / "runs" / "run-1" / "trace.json").is_file())
             self.assertTrue((Path(tmp) / "trace-index.sqlite3").is_file())
+            with closing(sqlite3.connect(Path(tmp) / "trace-index.sqlite3")) as conn:
+                indexes = {
+                    row[1]
+                    for row in conn.execute(
+                        "SELECT type, name FROM sqlite_master WHERE type = 'index'"
+                    ).fetchall()
+                }
+            self.assertIn("idx_trace_events_run", indexes)
+            self.assertIn("idx_trace_events_type", indexes)
 
     def test_trace_read_rejects_tampered_hash_chain(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

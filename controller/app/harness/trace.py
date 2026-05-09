@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import time
 import uuid
@@ -210,7 +211,7 @@ class TraceRecorder:
 
     def _startup_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         try:
             conn.execute(
                 """
@@ -232,7 +233,7 @@ class TraceRecorder:
             conn.close()
 
     def _insert_event(self, event: TraceEvent) -> None:
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         try:
             conn.execute(
                 """
@@ -253,6 +254,13 @@ class TraceRecorder:
             conn.commit()
         finally:
             conn.close()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=10)
+        if os.name != "nt":
+            conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
 
 
 def _redact_sensitive(value: Any) -> Any:
