@@ -16,9 +16,11 @@ from app.harness import (
     Postcondition,
     TaskContract,
     TraceEnvelope,
+    TraceEvent,
     TraceIntegrityError,
     TraceRecorder,
 )
+from app.harness.drift import SkillDriftMonitor
 from app.harness.induce import SkillInducer
 from app.harness.iterate import HarnessService
 from app.harness.register import SkillStagingRegistry, mesh_identity_signer
@@ -162,6 +164,46 @@ class SkillInducerTests(unittest.TestCase):
             registry = SkillStagingRegistry(Path(tmp) / "staging")
             with self.assertRaises(KeyError):
                 registry.get_candidate("../outside")
+
+    def test_drift_monitor_marks_candidate_healthy(self) -> None:
+        contract = _contract(max_attempts=1)
+        trace = _trace_for_contract(contract, url="https://example.com/done", text="done")
+        verification = VerificationResult(passed=True, confidence=1.0, backend="programmatic")
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = SkillInducer(tmp).induce(
+                contract=contract,
+                trace=trace,
+                verification=verification,
+                attempts=1,
+            )
+            monitor = SkillDriftMonitor(SkillStagingRegistry(tmp))
+
+            result = asyncio.run(monitor.check_candidate(candidate.skill_id))
+
+            self.assertEqual(result.status, "healthy")
+            self.assertTrue(Path(candidate.files["candidate.json"]).with_name("drift.json").is_file())
+
+    def test_drift_monitor_marks_failed_oracle_as_degraded(self) -> None:
+        contract = _contract(max_attempts=1)
+        trace = _trace_for_contract(contract, url="https://example.com/start", text="not done")
+        verification = VerificationResult(passed=False, confidence=0.0, backend="programmatic")
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = SkillInducer(tmp).induce(
+                contract=contract,
+                trace=trace,
+                verification=verification,
+                attempts=1,
+            )
+            monitor = SkillDriftMonitor(SkillStagingRegistry(tmp))
+
+            result = asyncio.run(monitor.check_candidate(candidate.skill_id))
+
+            self.assertEqual(result.status, "degraded")
+            self.assertIsNotNone(result.verification)
+            assert result.verification is not None
+            self.assertFalse(result.verification.passed)
+            drift = json.loads(Path(candidate.files["candidate.json"]).with_name("drift.json").read_text(encoding="utf-8"))
+            self.assertEqual(drift["status"], "degraded")
 
     def test_inducer_uses_mesh_signed_envelope_when_identity_is_available(self) -> None:
         from app.mesh.identity import NodeIdentity
@@ -323,4 +365,19 @@ def _contract(
             EvidenceRequirement(kind="actions"),
         ],
         budget=Budget(max_attempts=max_attempts, max_steps=2, max_wall_seconds=max_wall_seconds),
+    )
+
+
+def _trace_for_contract(contract: TaskContract, *, url: str, text: str) -> TraceEnvelope:
+    event = TraceEvent(
+        run_id="trace-drift",
+        step_idx=1,
+        event_type="action",
+        payload={"action": "navigate"},
+    ).with_hash()
+    return TraceEnvelope(
+        run_id="trace-drift",
+        contract_hash=contract.hash(),
+        events=[event],
+        final_observation={"url": url, "text": text},
     )

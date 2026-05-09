@@ -31,6 +31,12 @@ class SkillStagingRegistry:
             raise KeyError(skill_id)
         return SkillCandidate.model_validate_json(path.read_text(encoding="utf-8"))
 
+    def candidate_dir(self, skill_id: str) -> Path:
+        path = self._candidate_path(skill_id).parent
+        if not path.exists():
+            raise KeyError(skill_id)
+        return path
+
     def _candidate_path(self, skill_id: str) -> Path:
         staging_root = self.staging_root.resolve()
         path = (self.staging_root / skill_id / "candidate.json").resolve()
