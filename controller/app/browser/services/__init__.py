@@ -10,6 +10,7 @@ from .remote_access import BrowserRemoteAccessService
 from .runtime import BrowserRuntimeService
 from .sessions import BrowserSessionService
 from .tabs import BrowserTabService
+from .takeover import BrowserTakeoverService
 from .uploads import BrowserUploadService
 from .witness import BrowserWitnessService
 
@@ -24,6 +25,7 @@ __all__ = [
     "BrowserRuntimeService",
     "BrowserSessionService",
     "BrowserTabService",
+    "BrowserTakeoverService",
     "BrowserUploadService",
     "BrowserWitnessService",
 ]

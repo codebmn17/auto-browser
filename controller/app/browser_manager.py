@@ -30,6 +30,7 @@ from .browser.services import (
     BrowserRuntimeService,
     BrowserSessionService,
     BrowserTabService,
+    BrowserTakeoverService,
     BrowserUploadService,
     BrowserWitnessService,
 )
@@ -49,7 +50,7 @@ from .pii_scrub import PiiScrubber
 from .session_isolation import DockerBrowserNodeProvisioner, IsolatedBrowserRuntime
 from .session_store import DurableSessionStore
 from .session_tunnel import IsolatedSessionTunnel, IsolatedSessionTunnelBroker
-from .utils import UTC, utc_now
+from .utils import UTC
 from .witness import (
     WitnessActionContext,
     WitnessApproval,
@@ -132,6 +133,7 @@ class BrowserManager:
         self.runtime = BrowserRuntimeService(self)
         self.witness_bridge = BrowserWitnessService(self)
         self.remote_access = BrowserRemoteAccessService(self)
+        self.takeover = BrowserTakeoverService(self)
 
         Path(self.settings.artifact_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.upload_root).mkdir(parents=True, exist_ok=True)
@@ -741,40 +743,7 @@ class BrowserManager:
         return await self.auth_profiles.list()
 
     async def request_human_takeover(self, session_id: str, reason: str) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        payload = {
-            "session": await self._session_summary(session),
-            "reason": reason,
-            "takeover_url": self._current_takeover_url(session),
-            "remote_access": self._session_remote_access_info(session),
-            "message": (
-                "Human takeover requested. Open the noVNC URL to continue visually."
-                if session.isolation_mode == "docker_ephemeral"
-                else "Human takeover requested. Open the noVNC URL to continue visually. In this POC, takeover is global to the single browser desktop."
-            ),
-        }
-        await self._append_jsonl(
-            session.artifact_dir / "actions.jsonl",
-            {"timestamp": utc_now(), "action": "request_human_takeover", **payload},
-        )
-        await self.audit.append(
-            event_type="takeover_requested",
-            status="ok",
-            action="request_human_takeover",
-            session_id=session.id,
-            details={"reason": reason},
-        )
-        await self._record_witness_receipt(
-            session,
-            event_type="control",
-            status="ok",
-            action="request_human_takeover",
-            action_class="control",
-            target={"reason": reason},
-        )
-        payload["session"] = await self._session_summary(session)
-        await self._persist_session(session, status="active")
-        return payload
+        return await self.takeover.request(session_id, reason)
 
     async def _require_decision_approval(
         self,
