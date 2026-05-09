@@ -4,7 +4,6 @@ import asyncio
 import fnmatch
 import inspect
 import logging
-import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -1508,44 +1507,7 @@ class BrowserManager:
     # ── Screenshot diff ──────────────────────────────────────────────────────
 
     async def screenshot_diff(self, session_id: str) -> dict[str, Any]:
-        """Capture a new screenshot and compare pixel-by-pixel with the previous one.
-
-        On the first call (no prior screenshot exists), saves a baseline and returns
-        {"baseline_captured": True} — navigate to a new state and call again to compare.
-        """
-        session = await self.get_session(session_id)
-        async with session.lock:
-            # Find any prior non-diff-b screenshot first
-            artifact_dir = session.artifact_dir
-            prior_shots = sorted(
-                [p for p in artifact_dir.glob("*.png") if "diff-b" not in p.name],
-                key=lambda p: p.stat().st_mtime,
-            )
-
-            # Capture current state
-            new_shot = await self._capture_screenshot(session, "diff-b")
-
-            if not prior_shots:
-                # No baseline — the screenshot we just took becomes the reference.
-                # Rename it so next call picks it up as the prior.
-                baseline_path = artifact_dir / "screenshot-baseline.png"
-                shutil.copy2(new_shot["path"], str(baseline_path))
-                return {
-                    "baseline_captured": True,
-                    "baseline_url": f"/artifacts/{session_id}/screenshot-baseline.png",
-                    "message": "Baseline saved. Navigate to a new state and call compare again to see the diff.",
-                }
-
-            prev_path = prior_shots[-1]
-            prev_url = f"/artifacts/{session_id}/{prev_path.name}"
-            return await asyncio.to_thread(
-                self._compute_diff,
-                str(prev_path),
-                new_shot["path"],
-                prev_url,
-                new_shot["url"],
-                session.artifact_dir,
-            )
+        return await self.diagnostics.screenshot_diff(session_id)
 
     @staticmethod
     def _compute_diff(
@@ -1555,57 +1517,7 @@ class BrowserManager:
         b_url: str,
         artifact_dir: Path,
     ) -> dict[str, Any]:
-        try:
-            from PIL import Image, ImageChops  # type: ignore[import]
-
-            img_a = Image.open(a_path).convert("RGB")
-            img_b = Image.open(b_path).convert("RGB")
-
-            # Resize b to match a dimensions if they differ
-            if img_a.size != img_b.size:
-                img_b = img_b.resize(img_a.size, Image.LANCZOS)
-
-            diff = ImageChops.difference(img_a, img_b)
-            total_pixels = img_a.width * img_a.height
-
-            # Count non-black pixels in the diff
-            data = diff.tobytes()
-            changed = sum(
-                1 for i in range(0, len(data), 3)
-                if data[i] > 8 or data[i + 1] > 8 or data[i + 2] > 8
-            )
-            changed_pct = round(changed / total_pixels * 100, 4) if total_pixels > 0 else 0.0
-
-            # Save diff image
-            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-            diff_filename = f"{ts}-diff.png"
-            diff_path = artifact_dir / diff_filename
-            diff.save(str(diff_path))
-            diff_url = f"/artifacts/{artifact_dir.name}/{diff_filename}"
-
-            return {
-                "changed_pixels": changed,
-                "changed_pct": changed_pct,
-                "diff_url": diff_url,
-                "diff_path": str(diff_path),
-                "a_url": a_url,
-                "b_url": b_url,
-                "width": img_a.width,
-                "height": img_a.height,
-            }
-        except Exception as exc:
-            logger.warning("screenshot diff failed: %s", exc)
-            return {
-                "error": "screenshot_diff_failed",
-                "changed_pixels": -1,
-                "changed_pct": -1.0,
-                "diff_url": None,
-                "diff_path": None,
-                "a_url": a_url,
-                "b_url": b_url,
-                "width": 0,
-                "height": 0,
-            }
+        return BrowserDiagnosticsService.compute_diff(a_path, b_path, a_url, b_url, artifact_dir)
 
     # ── Auth profile export / import ────────────────────────────────────────
 
