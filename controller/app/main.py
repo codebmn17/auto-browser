@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import hmac
 import logging
 import os
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,10 +14,9 @@ from .app_factory import (
     create_controller_app,
     install_controller_host_middleware,
 )
-from .audit import reset_current_operator, set_current_operator
 from .compliance import VALID_TEMPLATES, apply_compliance_template, write_compliance_manifest
 from .config import get_settings
-from .rate_limits import build_rate_limit_key, is_exempt_path
+from .middleware import install_controller_http_middleware
 from .routes.agent import create_agent_router
 from .routes.auth_profiles import create_auth_profiles_router
 from .routes.mcp import create_mcp_router
@@ -38,18 +35,6 @@ _VERSION = "1.0.6"
 def _install_controller_host_middleware(application: FastAPI, allowed_hosts: list[str]) -> None:
     install_controller_host_middleware(application, allowed_hosts)
 
-
-def _is_bearer_token_exempt_path(path: str) -> bool:
-    return path in {
-        "/healthz",
-        "/readyz",
-        "/mesh/receive",
-        "/version",
-        "/dashboard",
-        "/dashboard/",
-        "/ui",
-        "/ui/",
-    }
 
 settings = get_settings()
 _compliance_template = settings.compliance_template.upper().strip() if settings.compliance_template else None
@@ -122,6 +107,7 @@ app.include_router(
         cron_service=cron_service,
     )
 )
+install_controller_http_middleware(app, settings=settings, rate_limiter=rate_limiter, metrics=metrics)
 
 # Legacy operator dashboard aliases now redirect to the auth-bootstrap-aware dashboard.
 @app.get("/ui", include_in_schema=False)
@@ -140,118 +126,3 @@ async def handle_key_not_found(_: Request, exc: KeyError) -> JSONResponse:
 @app.exception_handler(BrowserActionError)
 async def handle_browser_action_error(_: Request, exc: BrowserActionError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content=exc.payload)
-
-
-@app.middleware("http")
-async def require_api_bearer_token(request: Request, call_next):
-    path = request.url.path
-    if not settings.api_bearer_token or _is_bearer_token_exempt_path(path):
-        return await call_next(request)
-
-    header = request.headers.get("authorization", "")
-    expected = f"Bearer {settings.api_bearer_token}"
-    if not hmac.compare_digest(header.encode(), expected.encode()):
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Missing or invalid bearer token"},
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return await call_next(request)
-
-
-@app.middleware("http")
-async def enforce_rate_limits(request: Request, call_next):
-    if rate_limiter is None or is_exempt_path(request.url.path, settings.request_rate_limit_exempt_path_list):
-        return await call_next(request)
-
-    decision = await rate_limiter.evaluate(
-        build_rate_limit_key(
-            operator_id_header=settings.operator_id_header,
-            headers=request.headers,
-            client_host=request.client.host if request.client else None,
-        )
-    )
-    headers = {
-        "X-RateLimit-Limit": str(decision.limit),
-        "X-RateLimit-Remaining": str(decision.remaining),
-        "X-RateLimit-Reset": str(decision.reset_after_seconds),
-    }
-    if decision.exceeded:
-        headers["Retry-After"] = str(decision.retry_after_seconds or decision.reset_after_seconds)
-        return JSONResponse(
-            status_code=429,
-            content={
-                "detail": "Rate limit exceeded",
-                "limit": decision.limit,
-                "window_seconds": decision.window_seconds,
-                "retry_after_seconds": decision.retry_after_seconds or decision.reset_after_seconds,
-            },
-            headers=headers,
-        )
-
-    response = await call_next(request)
-    response.headers.update(headers)
-    return response
-
-
-@app.middleware("http")
-async def bind_operator_identity(request: Request, call_next):
-    path = request.url.path
-    exempt_prefixes = (
-        "/healthz",
-        "/readyz",
-        "/docs",
-        "/openapi.json",
-        "/redoc",
-        "/artifacts",
-        "/metrics",
-        "/dashboard",
-        "/ui",
-        "/mesh/receive",
-    )
-    operator_id = request.headers.get(settings.operator_id_header)
-    operator_name = request.headers.get(settings.operator_name_header)
-
-    if settings.require_operator_id and not path.startswith(exempt_prefixes) and not operator_id:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "detail": f"Missing required operator header: {settings.operator_id_header}",
-            },
-        )
-
-    token = set_current_operator(operator_id, name=operator_name, source="header")
-    try:
-        return await call_next(request)
-    finally:
-        reset_current_operator(token)
-
-
-@app.middleware("http")
-async def record_http_metrics(request: Request, call_next):
-    if not metrics.enabled:
-        return await call_next(request)
-
-    start = time.perf_counter()
-    try:
-        response = await call_next(request)
-    except Exception:
-        duration = time.perf_counter() - start
-        metrics.record_http_request(
-            method=request.method,
-            path=request.url.path,
-            status_code=500,
-            duration_seconds=duration,
-        )
-        raise
-
-    duration = time.perf_counter() - start
-    route = request.scope.get("route")
-    path = getattr(route, "path", request.url.path)
-    metrics.record_http_request(
-        method=request.method,
-        path=path,
-        status_code=response.status_code,
-        duration_seconds=duration,
-    )
-    return response
