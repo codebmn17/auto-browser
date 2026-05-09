@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 
 from ..models import ShareSessionRequest
+from ._utils import internal_error
+
+logger = logging.getLogger(__name__)
 
 
 def create_share_router(*, manager: Any, share_manager: Any) -> APIRouter:
@@ -34,7 +38,7 @@ def create_share_router(*, manager: Any, share_manager: Any) -> APIRouter:
         except KeyError:
             raise HTTPException(status_code=404, detail="Unknown session") from None
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "shared observe failed") from None
 
     @router.get("/share/{token}", response_class=HTMLResponse)
     async def shared_session_view(token: str) -> HTMLResponse:

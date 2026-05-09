@@ -29,13 +29,13 @@ Works with:
 - **Safety rails built in.** Approvals, operator identity, PII scrubbing, Witness receipts, and compliance templates are all part of the product surface.
 - **Governed skill induction.** Experimental convergence runs can turn verified browser traces into staged skill candidates without bypassing review.
 
-## Release Highlights (v1.0.6)
+## Release Highlights (v1.1.0)
 
-- **Stage 0 convergence harness** adds task contracts, tamper-checked traces, programmatic/UV verifier adapters, budgeted iteration, and staged skill induction.
-- **Governed skill graduation** writes generated skills only to staging with provenance, signed envelopes, self-tests, and MCP candidate review tools.
-- **MCP harness tools** expose convergence runs under the full tool profile while preserving approval gates for live-session work.
-- **Security hardening** tightens dashboard auth exemptions, JavaScript evaluation, webhook target validation, trace redaction, and harness path handling.
-- **Operator observability** improves gateway, cron, harness, and `/version` behavior so failures are easier to diagnose.
+- **Modular controller architecture** splits the app factory, routers, middleware, browser services, action pipeline, and MCP tool packs without changing the public API.
+- **Agent skill induction foundation** keeps the governed Stage 0 harness: contracts, tamper-checked traces, verifier adapters, staged skill candidates, signed provenance, and review-only graduation.
+- **MCP-native operations** add tool annotations, resource listing/subscriptions, harness candidate tools, per-tool metrics, and response metadata for better agent planning.
+- **Skill drift monitoring** lets operators re-check staged skills and mark degraded candidates when their verifier no longer passes.
+- **Release-grade hardening** improves route failure logging, tool descriptor caching, deep health packaging, router startup behavior, and artifact path trust.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the full release history.
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import copy
+import json
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -149,7 +149,7 @@ class ToolRegistry:
         self.tool_profile = "full" if tool_profile == "full" else "curated"
         self._experimental_enabled = experimental_enabled
         self._tools: dict[str, ToolSpec] = {}
-        self._descriptor_cache: list[dict[str, Any]] | None = None
+        self._descriptor_cache_json: str | None = None
 
     def register(self, spec: ToolSpec) -> None:
         if self.tool_profile not in spec.profiles:
@@ -158,11 +158,11 @@ class ToolRegistry:
             return
 
         self._tools[spec.name] = spec
-        self._descriptor_cache = None
+        self._descriptor_cache_json = None
 
     def unregister(self, name: str) -> None:
         if self._tools.pop(name, None) is not None:
-            self._descriptor_cache = None
+            self._descriptor_cache_json = None
 
     @property
     def tools(self) -> dict[str, ToolSpec]:
@@ -172,7 +172,7 @@ class ToolRegistry:
         return self._tools.get(name)
 
     def list_tools(self) -> list[dict[str, Any]]:
-        if self._descriptor_cache is None:
+        if self._descriptor_cache_json is None:
             descriptors = [
                 McpToolDescriptor(
                     name=spec.name,
@@ -182,6 +182,6 @@ class ToolRegistry:
                 ).model_dump(exclude_none=True)
                 for spec in self._tools.values()
             ]
-            self._descriptor_cache = descriptors
+            self._descriptor_cache_json = json.dumps(descriptors, separators=(",", ":"))
 
-        return copy.deepcopy(self._descriptor_cache)
+        return json.loads(self._descriptor_cache_json)

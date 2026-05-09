@@ -49,8 +49,8 @@ async def mesh_receive(body: MeshReceiveRequest, request: Request):
         response = await delegation_mgr.receive_inbound(envelope)
     except (DelegationRejected, DelegationReplayError):
         raise HTTPException(403, "Mesh delegation rejected")
-    except Exception as exc:
-        logger.error("mesh.receive error: %s", exc)
+    except Exception:
+        logger.exception("mesh.receive error")
         raise HTTPException(500, "Mesh receive failed")
 
     identity = app.state.mesh_identity
@@ -80,6 +80,7 @@ async def mesh_add_peer(body: dict[str, Any], request: Request):
     try:
         peer = PeerRecord(**body)
     except Exception:
+        logger.debug("invalid mesh peer record", exc_info=True)
         raise HTTPException(422, "Invalid peer record")
     peers.add(peer)
     return {"status": "added", "node_id": peer.node_id}

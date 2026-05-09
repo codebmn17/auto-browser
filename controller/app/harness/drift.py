@@ -6,7 +6,6 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from .contracts import TaskContract
-from .induce import SkillCandidate
 from .register import SkillStagingRegistry
 from .trace import TraceEnvelope
 from .verifier.base import VerificationResult, VerifierAdapter
@@ -43,8 +42,8 @@ class SkillDriftMonitor:
 
         candidate_dir = self.registry.candidate_dir(candidate.skill_id)
         try:
-            contract = TaskContract.model_validate_json(_read_artifact(candidate, "contract.json"))
-            trace = TraceEnvelope.read_json(_artifact_path(candidate, "trace.json"))
+            contract = TaskContract.model_validate_json(_read_artifact(candidate_dir, "contract.json"))
+            trace = TraceEnvelope.read_json(_artifact_path(candidate_dir, "trace.json"))
         except Exception as exc:
             result = DriftCheckResult(
                 skill_id=skill_id,
@@ -92,15 +91,20 @@ class SkillDriftMonitor:
         return results
 
 
-def _artifact_path(candidate: SkillCandidate, name: str) -> Path:
-    raw_path = candidate.files.get(name)
-    if not raw_path:
+def _artifact_path(candidate_dir: Path, name: str) -> Path:
+    root = candidate_dir.resolve()
+    path = (candidate_dir / name).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise FileNotFoundError(name) from exc
+    if not path.exists():
         raise FileNotFoundError(name)
-    return Path(raw_path)
+    return path
 
 
-def _read_artifact(candidate: SkillCandidate, name: str) -> str:
-    return _artifact_path(candidate, name).read_text(encoding="utf-8")
+def _read_artifact(candidate_dir: Path, name: str) -> str:
+    return _artifact_path(candidate_dir, name).read_text(encoding="utf-8")
 
 
 def _write_result(candidate_dir: Path, result: DriftCheckResult) -> Path:

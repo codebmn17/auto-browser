@@ -205,6 +205,27 @@ class SkillInducerTests(unittest.TestCase):
             drift = json.loads(Path(candidate.files["candidate.json"]).with_name("drift.json").read_text(encoding="utf-8"))
             self.assertEqual(drift["status"], "degraded")
 
+    def test_drift_monitor_ignores_tampered_recorded_artifact_paths(self) -> None:
+        contract = _contract(max_attempts=1)
+        trace = _trace_for_contract(contract, url="https://example.com/done", text="done")
+        verification = VerificationResult(passed=True, confidence=1.0, backend="programmatic")
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = SkillInducer(tmp).induce(
+                contract=contract,
+                trace=trace,
+                verification=verification,
+                attempts=1,
+            )
+            outside = Path(tmp) / "outside-contract.json"
+            outside.write_text("{}", encoding="utf-8")
+            candidate.files["contract.json"] = str(outside)
+            Path(candidate.files["candidate.json"]).write_text(candidate.model_dump_json(indent=2), encoding="utf-8")
+            monitor = SkillDriftMonitor(SkillStagingRegistry(tmp))
+
+            result = asyncio.run(monitor.check_candidate(candidate.skill_id))
+
+            self.assertEqual(result.status, "healthy")
+
     def test_inducer_uses_mesh_signed_envelope_when_identity_is_available(self) -> None:
         from app.mesh.identity import NodeIdentity
         from app.mesh.models import PeerRecord, SignedEnvelope

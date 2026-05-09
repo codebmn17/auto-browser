@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -23,6 +24,9 @@ from ..models import (
     UploadRequest,
     WaitRequest,
 )
+from ._utils import internal_error
+
+logger = logging.getLogger(__name__)
 
 
 def create_sessions_router(*, manager: Any) -> APIRouter:
@@ -60,7 +64,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except RuntimeError:
             raise HTTPException(status_code=409, detail="Conflict") from None
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "create session failed") from None
 
     @router.get("/sessions/{session_id}")
     async def get_session(session_id: str) -> dict[str, Any]:
@@ -73,7 +77,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except KeyError:
             raise HTTPException(status_code=404, detail="Unknown session") from None
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "observe failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/observe")
     async def observe_post(session_id: str, payload: ObserveRequest) -> dict[str, Any]:
@@ -82,7 +86,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except KeyError:
             raise HTTPException(status_code=404, detail="Unknown session") from None
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "observe failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/screenshot")
     async def capture_screenshot(session_id: str, payload: ScreenshotRequest) -> dict[str, Any]:
@@ -126,7 +130,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except ApprovalRequiredError:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "navigate failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/click")
     async def click(session_id: str, payload: ClickRequest) -> dict[str, Any]:
@@ -145,7 +149,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except ApprovalRequiredError:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "click failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/type")
     async def type_text(session_id: str, payload: TypeRequest) -> dict[str, Any]:
@@ -165,7 +169,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except ApprovalRequiredError:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "type failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/press")
     async def press_key(session_id: str, payload: PressRequest) -> dict[str, Any]:
@@ -176,7 +180,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except ApprovalRequiredError:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "press failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/scroll")
     async def scroll(session_id: str, payload: ScrollRequest) -> dict[str, Any]:
@@ -185,7 +189,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except PermissionError:
             raise HTTPException(status_code=403, detail="Not permitted") from None
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "scroll failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/execute")
     async def execute_action(session_id: str, payload: ExecuteActionRequest) -> dict[str, Any]:
@@ -202,7 +206,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except ApprovalRequiredError:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "execute action failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/upload")
     async def upload(session_id: str, payload: UploadRequest) -> dict[str, Any]:
@@ -224,7 +228,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid request") from None
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "upload failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/hover")
     async def hover(session_id: str, payload: HoverRequest) -> dict[str, Any]:
@@ -243,7 +247,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except ApprovalRequiredError:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "hover failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/select-option")
     async def select_option(session_id: str, payload: SelectOptionRequest) -> dict[str, Any]:
@@ -263,7 +267,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except ApprovalRequiredError:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "select option failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/wait")
     async def wait(session_id: str, payload: WaitRequest) -> dict[str, Any]:
@@ -272,7 +276,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except KeyError:
             raise HTTPException(status_code=404, detail="Unknown session") from None
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "wait failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/reload")
     async def reload(session_id: str) -> dict[str, Any]:
@@ -283,7 +287,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except ApprovalRequiredError:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "reload failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/go-back")
     async def go_back(session_id: str) -> dict[str, Any]:
@@ -294,7 +298,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except ApprovalRequiredError:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "go back failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/actions/go-forward")
     async def go_forward(session_id: str) -> dict[str, Any]:
@@ -305,7 +309,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except ApprovalRequiredError:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "go forward failed for session %s", session_id) from None
 
     @router.post("/sessions/{session_id}/takeover")
     async def request_human_takeover(session_id: str, payload: HumanTakeoverRequest) -> dict[str, Any]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +8,9 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from ..models import ImportAuthProfileRequest, SaveAuthProfileRequest, SaveStorageStateRequest
-from ._utils import require_safe_segment
+from ._utils import internal_error, require_safe_segment
+
+logger = logging.getLogger(__name__)
 
 
 def create_auth_profiles_router(*, manager: Any, settings: Any) -> APIRouter:
@@ -52,7 +55,7 @@ def create_auth_profiles_router(*, manager: Any, settings: Any) -> APIRouter:
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Not found") from None
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "auth profile export failed for profile %s", profile_name) from None
 
         auth_root = Path(settings.auth_root).resolve()
         archive_name = str(result["archive_name"])
@@ -82,6 +85,6 @@ def create_auth_profiles_router(*, manager: Any, settings: Any) -> APIRouter:
         except FileExistsError:
             raise HTTPException(status_code=409, detail="Conflict") from None
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "auth profile import failed") from None
 
     return router

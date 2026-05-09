@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEEP_HEALTH_FIXTURE = _REPO_ROOT / "evals" / "fixtures" / "deep_health.html"
+_DEEP_HEALTH_FALLBACK = """<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Auto Browser deep health</title></head>
+  <body><main data-ab-deep-health="ready">Deep health ready</main></body>
+</html>
+"""
 _DEEP_HEALTH_TIMEOUT_MS = 5_000
 
 
@@ -29,10 +35,7 @@ async def run_deep_health_probe(manager: "BrowserManager") -> dict[str, Any]:
     started = time.perf_counter()
     checks: list[dict[str, Any]] = []
 
-    try:
-        fixture_html = _DEEP_HEALTH_FIXTURE.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise RuntimeError(f"deep health fixture unavailable: {_DEEP_HEALTH_FIXTURE}") from exc
+    fixture_html, fixture_source = _load_deep_health_fixture()
     if 'data-ab-deep-health="ready"' not in fixture_html:
         raise RuntimeError("deep health fixture missing ready marker")
     checks.append(
@@ -40,7 +43,7 @@ async def run_deep_health_probe(manager: "BrowserManager") -> dict[str, Any]:
             "name": "fixture",
             "status": "pass",
             "details": {
-                "path": str(_DEEP_HEALTH_FIXTURE),
+                "source": fixture_source,
                 "bytes": len(fixture_html.encode("utf-8")),
             },
         }
@@ -69,6 +72,14 @@ async def run_deep_health_probe(manager: "BrowserManager") -> dict[str, Any]:
         "checks": checks,
         "duration_ms": round((time.perf_counter() - started) * 1000, 2),
     }
+
+
+def _load_deep_health_fixture() -> tuple[str, str]:
+    try:
+        return _DEEP_HEALTH_FIXTURE.read_text(encoding="utf-8"), str(_DEEP_HEALTH_FIXTURE)
+    except OSError:
+        logger.warning("deep health fixture unavailable at %s; using embedded fallback", _DEEP_HEALTH_FIXTURE)
+        return _DEEP_HEALTH_FALLBACK, "embedded"
 
 
 def create_system_router(
@@ -109,6 +120,7 @@ def create_system_router(
             await manager.ensure_browser()
             return {"status": "ready", "environment": settings.environment_name}
         except Exception:
+            logger.exception("readiness check failed")
             raise HTTPException(status_code=503, detail="Service unavailable") from None
 
     @router.get("/version")

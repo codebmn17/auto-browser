@@ -224,7 +224,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload.name, "reexport-check")
 
-    async def test_tool_registry_descriptor_cache_invalidates_and_returns_copies(self) -> None:
+    async def test_tool_registry_descriptor_cache_invalidates_and_returns_json_safe_copies(self) -> None:
         registry = ToolRegistry(tool_profile="curated", experimental_enabled=lambda _: True)
 
         async def handler(_: EmptyInput):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import html as _html
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,9 @@ from starlette.responses import StreamingResponse
 
 from .. import events as _events
 from ..playwright_export import export_session_script
-from ._utils import require_safe_segment
+from ._utils import internal_error, require_safe_segment
+
+logger = logging.getLogger(__name__)
 
 
 def create_session_diagnostics_router(*, manager: Any, settings: Any) -> APIRouter:
@@ -53,7 +56,7 @@ def create_session_diagnostics_router(*, manager: Any, settings: Any) -> APIRout
         try:
             return await manager.screenshot_diff(session_id)
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "screenshot diff failed for session %s", session_id) from None
 
     @router.get("/sessions/{session_id}/replay", response_class=HTMLResponse)
     async def session_replay(session_id: str) -> HTMLResponse:
@@ -77,6 +80,7 @@ def create_session_diagnostics_router(*, manager: Any, settings: Any) -> APIRout
         try:
             events = await manager.list_audit_events(session_id=safe_session_id, limit=200)
         except Exception:
+            logger.debug("failed to load replay audit events for session %s", safe_session_id, exc_info=True)
             events = []
 
         session_info: dict[str, Any] = {}
@@ -88,6 +92,7 @@ def create_session_diagnostics_router(*, manager: Any, settings: Any) -> APIRout
                 record = await manager.session_store.get(safe_session_id)
                 session_info = record.model_dump()
         except Exception:
+            logger.debug("failed to load replay session info for session %s", safe_session_id, exc_info=True)
             pass
 
         def esc(s: object) -> str:

@@ -4,6 +4,28 @@ All notable changes to auto-browser are documented here.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-05-09
+
+### Added
+- Added MCP resource listing and subscription surfaces for session observations, harness run status, staged candidates, and recent audit events.
+- Added per-tool MCP metrics and response metadata for latency, status, and tool identity.
+- Added skill drift monitoring with `harness.check_drift` and `harness.check_all_drifts` so staged skills can be re-verified after site or contract changes.
+- Added `/healthz/deep` to exercise a real browser context against a deterministic fixture, with an embedded fallback when packaged without `evals/`.
+
+### Changed
+- Refactored the controller into an app factory, focused routers, controller middleware modules, tool packs, browser services, and a shared action pipeline while preserving the public API.
+- Split BrowserManager internals into lifecycle, action execution, runtime policy, approvals, observation, auth profile, witness, human takeover, bot challenge, tabs, downloads, uploads, and TOTP services.
+- Split the MCP tool gateway into a registry plus domain tool packs with MCP tool annotations for read-only, destructive, idempotent, and open-world behavior.
+- Centralized SQLite WAL connection tuning for audit, approvals, traces, and related stores.
+- Bumped controller, client, LangChain integration, and browser-node package metadata to `1.1.0`.
+
+### Fixed
+- Fixed tool descriptor caching so tools/list avoids repeated schema generation while returning JSON-safe copies.
+- Fixed broad route-level failure handlers to log traceback context before returning stable `500` responses.
+- Fixed staged skill drift checks so artifact reads are derived from the candidate directory instead of trusting recorded absolute paths.
+- Fixed app startup so router registration failures fail closed instead of booting a partial controller.
+- Fixed deep health packaging behavior so missing fixture files are visible in logs but do not break packaged deployments.
+
 ## [1.0.6] — 2026-05-09
 
 ### Added

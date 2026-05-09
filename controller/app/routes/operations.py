@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -8,6 +9,9 @@ from pydantic import ValidationError
 from ..approvals import ApprovalRequiredError
 from ..models import ApprovalDecisionRequest
 from ..tool_inputs import CreateCronJobInput, CreateProxyPersonaInput, TriggerCronJobInput
+from ._utils import internal_error
+
+logger = logging.getLogger(__name__)
 
 
 def create_operations_router(
@@ -75,7 +79,7 @@ def create_operations_router(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid request") from None
         except Exception:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise internal_error(logger, "approval execution failed for approval %s", approval_id) from None
 
     @router.get("/pii-scrubber")
     async def get_pii_scrubber() -> dict[str, Any]:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -24,8 +23,6 @@ from .routes.system import create_system_router
 from .session_share import SessionShareManager
 from .tool_gateway import McpToolGateway
 from .vision_target import VisionTargeter
-
-logger = logging.getLogger(__name__)
 
 LifespanFactory = Callable[[FastAPI], AbstractAsyncContextManager[None] | AsyncIterator[None]]
 
@@ -154,11 +151,8 @@ def create_controller_app(
         )
     )
 
-    try:
-        from .routes.extensions import register_all_routers
+    from .routes.extensions import register_all_routers
 
-        register_all_routers(application)
-    except Exception as exc:
-        logger.error("v1.0 routers registration failed (non-fatal): %s", exc)
+    register_all_routers(application)
 
     return application

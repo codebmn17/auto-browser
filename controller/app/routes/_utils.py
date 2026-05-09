@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from logging import Logger
 
 from fastapi import HTTPException
 
@@ -12,3 +13,8 @@ def require_safe_segment(value: str, *, field: str) -> str:
     if not isinstance(value, str) or not _SAFE_PATH_SEGMENT.fullmatch(value):
         raise HTTPException(status_code=400, detail=f"Invalid {field}")
     return value
+
+
+def internal_error(logger: Logger, message: str, *args: object) -> HTTPException:
+    logger.exception(message, *args)
+    return HTTPException(status_code=500, detail="Internal error")

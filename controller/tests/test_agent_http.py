@@ -29,6 +29,7 @@ for env_name, relative_path in {
     os.environ.setdefault(env_name, str(_TEST_ROOT / relative_path))
 
 import app.main as main_module
+import app.routes.system as system_routes
 from app.models import AgentStepResult, ProviderInfo
 
 
@@ -163,6 +164,19 @@ class AgentHttpTests(unittest.TestCase):
         self.assertEqual([check["status"] for check in body["checks"]], ["pass", "pass"])
         self.assertIn('data-ab-deep-health="ready"', browser.context.page.content)
         self.assertTrue(browser.context.closed)
+
+    def test_deep_health_uses_embedded_fixture_fallback(self) -> None:
+        browser = _DeepHealthBrowser()
+
+        with (
+            patch.object(system_routes, "_DEEP_HEALTH_FIXTURE", _TEST_ROOT / "missing-deep-health.html"),
+            patch.object(main_module.manager, "ensure_browser", new=AsyncMock(return_value=browser)),
+        ):
+            response = self.client.get("/healthz/deep")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["checks"][0]["details"]["source"], "embedded")
+        self.assertIn('data-ab-deep-health="ready"', browser.context.page.content)
 
     def test_deep_health_returns_503_when_probe_fails(self) -> None:
         with patch.object(main_module.manager, "ensure_browser", new=AsyncMock(side_effect=RuntimeError("down"))):
