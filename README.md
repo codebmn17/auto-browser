@@ -27,14 +27,15 @@ Works with:
 - **Login once, reuse later.** Save named auth profiles and reopen fresh sessions that are already signed in.
 - **Local-first by default.** Run the full stack on your own box with Docker Compose, or use Codespaces for a quick hosted demo.
 - **Safety rails built in.** Approvals, operator identity, PII scrubbing, Witness receipts, and compliance templates are all part of the product surface.
+- **Governed skill induction.** Experimental convergence runs can turn verified browser traces into staged skill candidates without bypassing review.
 
-## Release Highlights (v1.0.5)
+## Release Highlights (v1.0.6)
 
-- **Governed workflow enforcement** now blocks write-sensitive agent actions until an approval token is supplied.
-- **Social/Veo3 code is no longer shipped in the controller wheel** and no HTTP or MCP social routes are registered.
-- **Stealth defaults off** with `STEALTH_ENABLED=false`, matching the authorized-workflow product stance.
-- **Expanded evals** cover auth reuse, popup/download recovery, upload approval, resume recovery, multi-tab recovery, local fixtures, and `fast` versus `governed` divergence.
-- **Release audit hardening** adds fixture validation, dependency audits, wheel inspection, npm audit, and an 80% controller coverage gate.
+- **Stage 0 convergence harness** adds task contracts, tamper-checked traces, programmatic/UV verifier adapters, budgeted iteration, and staged skill induction.
+- **Governed skill graduation** writes generated skills only to staging with provenance, signed envelopes, self-tests, and MCP candidate review tools.
+- **MCP harness tools** expose convergence runs under the full tool profile while preserving approval gates for live-session work.
+- **Security hardening** tightens dashboard auth exemptions, JavaScript evaluation, webhook target validation, trace redaction, and harness path handling.
+- **Operator observability** improves gateway, cron, harness, and `/version` behavior so failures are easier to diagnose.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the full release history.
 
@@ -158,6 +159,18 @@ Client setup guides:
 - [`examples/cursor-mcp-setup.md`](./examples/cursor-mcp-setup.md)
 - [`examples/claude_desktop_config.json`](./examples/claude_desktop_config.json)
 
+## Convergence Harness
+
+Auto Browser includes an experimental Stage 0 convergence harness for Agent Skill Induction. It runs a structured task contract, records tamper-checked traces, verifies completion, and writes a staged skill candidate with provenance. It does not promote generated skills into production automatically.
+
+Start with [`docs/convergence-harness.md`](./docs/convergence-harness.md). A deterministic local smoke is:
+
+```bash
+python -m controller.harness.run --contract evals/contracts/example_read.json --mock-final-url https://example.com --mock-final-text "Example Domain"
+```
+
+For MCP clients, set `MCP_TOOL_PROFILE=full` to expose the `harness.*` tools.
+
 ## Security and Compliance
 
 For a real private deployment, set at least:
@@ -250,6 +263,7 @@ Core components:
 | run the curl-first examples | [`examples/README.md`](./examples/README.md) |
 | deploy on a trusted host | [`docs/deployment.md`](./docs/deployment.md) |
 | review production constraints | [`docs/production-hardening.md`](./docs/production-hardening.md) |
+| run the convergence harness | [`docs/convergence-harness.md`](./docs/convergence-harness.md) |
 | inspect release history | [`CHANGELOG.md`](./CHANGELOG.md) |
 | see where the project is headed | [`ROADMAP.md`](./ROADMAP.md) |
 

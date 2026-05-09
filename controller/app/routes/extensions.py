@@ -274,7 +274,6 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Auto Browser — Operator Dashboard</title>
-<script src="https://unpkg.com/htmx.org@1.9.12"></script>
 <style>
   :root { --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --accent: #6c63ff;
           --text: #e2e8f0; --muted: #64748b; --green: #10b981; --red: #ef4444; --yellow: #f59e0b; }

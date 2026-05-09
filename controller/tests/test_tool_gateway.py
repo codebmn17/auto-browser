@@ -97,6 +97,20 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             enqueue_step=AsyncMock(return_value={"id": "job-1", "kind": "agent_step"}),
             enqueue_run=AsyncMock(return_value={"id": "job-2", "kind": "agent_run"}),
         )
+        harness_record = SimpleNamespace(model_dump=lambda mode="json": {"id": "run-1", "status": "converged"})
+        self.harness_service = SimpleNamespace(
+            start_convergence=AsyncMock(return_value=harness_record),
+            get_status=lambda run_id: {"id": run_id, "status": "converged"},
+            get_trace=lambda run_id, attempt_index=None: {
+                "run_id": run_id,
+                "attempt_index": attempt_index,
+                "final_observation": {"url": "https://example.com"},
+            },
+            list_runs=lambda status=None, limit=50: [{"id": "run-1", "status": status or "converged", "limit": limit}],
+            list_candidates=lambda: [{"skill_id": "candidate-1"}],
+            get_candidate=lambda skill_id: {"skill_id": skill_id},
+            graduate=lambda run_id: {"status": "staged", "candidate": {"skill_id": run_id}},
+        )
         self.gateway = McpToolGateway(
             manager=self.manager,
             orchestrator=self.orchestrator,
@@ -107,6 +121,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
             orchestrator=self.orchestrator,
             job_queue=self.job_queue,
             tool_profile="full",
+            harness_service=self.harness_service,
         )
         self.vision_gateway = McpToolGateway(
             manager=self.manager,
@@ -165,6 +180,13 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("browser.delete_memory_profile", names)
         self.assertIn("browser.readiness_check", names)
         self.assertIn("browser.list_approvals", names)
+        self.assertIn("harness.start_convergence", names)
+        self.assertIn("harness.get_status", names)
+        self.assertIn("harness.get_trace", names)
+        self.assertIn("harness.list_runs", names)
+        self.assertIn("harness.list_candidates", names)
+        self.assertIn("harness.get_candidate", names)
+        self.assertIn("harness.graduate", names)
         self.assertNotIn("social.post", names)
         self.assertNotIn("social.dm", names)
         self.assertNotIn("browser.find_by_vision", names)
@@ -189,6 +211,97 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(response.isError)
         self.assertIn("Unknown tool: social.post", response.structuredContent["error"])
+
+    async def test_harness_tools_are_full_profile_only_and_forward_arguments(self) -> None:
+        curated_names = {tool["name"] for tool in self.gateway.list_tools()}
+        self.assertNotIn("harness.start_convergence", curated_names)
+
+        response = await self.full_gateway.call_tool(
+            McpToolCallRequest(
+                name="harness.start_convergence",
+                arguments={
+                    "contract": {
+                        "id": "task-1",
+                        "goal": "Reach the done page",
+                        "postconditions": [{"kind": "url_contains", "value": "example.com/done"}],
+                        "budget": {"max_attempts": 1, "max_steps": 2},
+                    },
+                    "mock_final_observation": {"url": "https://example.com/done"},
+                    "max_attempts": 1,
+                },
+            )
+        )
+        status_response = await self.full_gateway.call_tool(
+            McpToolCallRequest(name="harness.get_status", arguments={"run_id": "run-1"})
+        )
+        graduate_response = await self.full_gateway.call_tool(
+            McpToolCallRequest(name="harness.graduate", arguments={"run_id": "run-1"})
+        )
+        candidates_response = await self.full_gateway.call_tool(
+            McpToolCallRequest(name="harness.list_candidates", arguments={})
+        )
+        candidate_response = await self.full_gateway.call_tool(
+            McpToolCallRequest(name="harness.get_candidate", arguments={"skill_id": "candidate-1"})
+        )
+
+        self.assertFalse(response.isError)
+        self.assertEqual(response.structuredContent["status"], "converged")
+        self.assertFalse(status_response.isError)
+        self.assertEqual(status_response.structuredContent["status"], "converged")
+        self.assertFalse(graduate_response.isError)
+        self.assertEqual(graduate_response.structuredContent["status"], "staged")
+        self.assertFalse(candidates_response.isError)
+        self.assertEqual(candidates_response.structuredContent[0]["skill_id"], "candidate-1")
+        self.assertFalse(candidate_response.isError)
+        self.assertEqual(candidate_response.structuredContent["skill_id"], "candidate-1")
+        self.harness_service.start_convergence.assert_awaited_once()
+        contract = self.harness_service.start_convergence.await_args.args[0]
+        self.assertEqual(contract.id, "task-1")
+
+    async def test_harness_tools_return_clear_error_when_service_unavailable(self) -> None:
+        gateway = McpToolGateway(
+            manager=self.manager,
+            orchestrator=self.orchestrator,
+            job_queue=self.job_queue,
+            tool_profile="full",
+        )
+
+        response = await gateway.call_tool(McpToolCallRequest(name="harness.list_runs", arguments={}))
+
+        self.assertTrue(response.isError)
+        self.assertIn("harness service unavailable", response.structuredContent["error"])
+        self.assertIn("HARNESS_*", response.structuredContent["error"])
+
+    async def test_eval_js_requires_governed_profile(self) -> None:
+        response = await self.full_gateway.call_tool(
+            McpToolCallRequest(
+                name="browser.eval_js",
+                arguments={"session_id": "session-1", "expression": "() => 1"},
+            )
+        )
+
+        self.assertTrue(response.isError)
+        self.assertIn("requires workflow_profile=governed", response.structuredContent["error"])
+
+    async def test_live_harness_start_requires_governed_profile(self) -> None:
+        response = await self.full_gateway.call_tool(
+            McpToolCallRequest(
+                name="harness.start_convergence",
+                arguments={
+                    "session_id": "session-1",
+                    "contract": {
+                        "id": "task-live",
+                        "goal": "Reach the done page",
+                        "postconditions": [{"kind": "url_contains", "value": "done"}],
+                        "budget": {"max_steps": 2, "max_attempts": 1},
+                    },
+                },
+            )
+        )
+
+        self.assertTrue(response.isError)
+        self.assertIn("requires workflow_profile=governed", response.structuredContent["error"])
+        self.harness_service.start_convergence.assert_not_awaited()
 
     async def test_resume_agent_job_tool_forwards_arguments(self) -> None:
         response = await self.full_gateway.call_tool(
@@ -578,7 +691,7 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         calls = [
             ("browser.get_network_log", {"session_id": "session-1"}),
             ("browser.fork_session", {"session_id": "session-1", "name": "fork"}),
-            ("browser.eval_js", {"session_id": "session-1", "expression": "() => 1"}),
+            ("browser.eval_js", {"session_id": "session-1", "expression": "() => 1", "workflow_profile": "governed"}),
             ("browser.wait_for_selector", {"session_id": "session-1", "selector": "button"}),
             ("browser.get_html", {"session_id": "session-1", "text_only": True}),
             ("browser.get_html", {"session_id": "session-1", "text_only": False}),

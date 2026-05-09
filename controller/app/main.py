@@ -71,9 +71,22 @@ _log_level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), loggi
 logging.basicConfig(level=_log_level)
 logger = logging.getLogger(__name__)
 
-_VERSION = "1.0.5"
+_VERSION = "1.0.6"
 
 _SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _is_bearer_token_exempt_path(path: str) -> bool:
+    return path in {
+        "/healthz",
+        "/readyz",
+        "/mesh/receive",
+        "/version",
+        "/dashboard",
+        "/dashboard/",
+        "/ui",
+        "/ui/",
+    }
 
 
 def _require_safe_segment(value: str, *, field: str) -> str:
@@ -230,12 +243,7 @@ async def handle_browser_action_error(_: Request, exc: BrowserActionError) -> JS
 @app.middleware("http")
 async def require_api_bearer_token(request: Request, call_next):
     path = request.url.path
-    if (
-        path in {"/healthz", "/readyz", "/mesh/receive"}
-        or path.startswith("/dashboard")
-        or path.startswith("/ui")
-        or not settings.api_bearer_token
-    ):
+    if not settings.api_bearer_token or _is_bearer_token_exempt_path(path):
         return await call_next(request)
 
     header = request.headers.get("authorization", "")
@@ -359,6 +367,11 @@ async def readyz() -> dict[str, str]:
         return {"status": "ready", "environment": settings.environment_name}
     except Exception:
         raise HTTPException(status_code=503, detail="Service unavailable") from None
+
+
+@app.get("/version")
+async def get_version() -> dict[str, str]:
+    return {"version": _VERSION}
 
 
 @app.get("/metrics", include_in_schema=False)

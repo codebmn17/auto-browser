@@ -1,6 +1,19 @@
 from __future__ import annotations
 
-from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram, generate_latest
+import os
+
+if os.name == "nt":
+    import platform as _platform
+
+    # Avoid prometheus_client's default PlatformCollector triggering slow WMI probes on Windows imports.
+    _original_platform_system = _platform.system
+    _platform.system = lambda: "Windows"
+    try:
+        from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram, generate_latest
+    finally:
+        _platform.system = _original_platform_system
+else:
+    from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 
 
 class MetricsRecorder:

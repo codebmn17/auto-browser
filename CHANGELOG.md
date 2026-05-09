@@ -4,6 +4,30 @@ All notable changes to auto-browser are documented here.
 
 ## [Unreleased]
 
+## [1.0.6] — 2026-05-09
+
+### Added
+- Added the Stage 0 convergence harness for Agent Skill Induction with task contracts, hash-chained traces, deterministic verification, budgeted iteration, staged skill induction, and CLI smoke support.
+- Added Universal Verifier adapter boundaries and ensemble verifier plumbing so UV/Stagehand-style verification can be swapped in without changing harness callers.
+- Added staged skill candidate artifacts with provenance, embedded self-tests, trace/contract copies, and optional mesh-signed envelopes that are round-trip verified before write.
+- Added full-profile MCP tools for harness runs and staged candidate review: `harness.start_convergence`, `harness.get_status`, `harness.get_trace`, `harness.list_runs`, `harness.list_candidates`, `harness.get_candidate`, and `harness.graduate`.
+- Added benchmark scaffolds for WebArena, Online-Mind2Web, and CUAVerifierBench plus a deterministic example contract.
+- Added `/version` for operator/runtime identification.
+
+### Changed
+- Requires `workflow_profile=governed` for page-level JavaScript evaluation and live-session harness convergence.
+- Tightened bearer-token exemptions so dashboard/UI roots are exact-match only, not broad path prefixes.
+- Removed the unused external HTMX CDN script from the operator dashboard.
+- Strengthened approval webhook target validation against loopback, private, link-local, metadata, unspecified, multicast, and reserved IP targets.
+- Improved gateway, cron, harness run, and staged-candidate logging around failures and unreadable artifacts.
+- Bumped controller, client, LangChain integration, and browser-node package metadata to `1.0.6`.
+
+### Fixed
+- Fixed staging path traversal and long-slug collision risks in induced skill IDs.
+- Fixed trace hash-chain validation so tampering is detected on read, not only at write time.
+- Fixed sensitive trace fields so auth, cookie, token, password, secret, and API-key payloads are redacted before persistence.
+- Fixed harness startup failure behavior so MCP callers get a clear harness-unavailable error instead of a generic tool failure.
+
 ## [1.0.5] — 2026-05-07
 
 ### Added

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -43,6 +44,12 @@ from .tool_inputs import (  # noqa: F401 — re-exported for backwards compat
     GetPageHtmlInput,
     GetRemoteAccessInput,
     GetStorageInput,
+    HarnessGetStatusInput,
+    HarnessGetTraceInput,
+    HarnessGraduateInput,
+    HarnessListRunsInput,
+    HarnessSkillIdInput,
+    HarnessStartConvergenceInput,
     ListAgentJobsInput,
     ListApprovalsInput,
     ListAuthProfilesInput,
@@ -73,6 +80,8 @@ from .tool_inputs import (  # noqa: F401 — re-exported for backwards compat
     WaitForSelectorInput,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class ToolSpec:
@@ -97,6 +106,7 @@ class McpToolGateway:
         share_manager=None,
         proxy_store=None,
         vision_targeter=None,
+        harness_service=None,
     ):
         self.manager = manager
         self.orchestrator = orchestrator
@@ -106,6 +116,7 @@ class McpToolGateway:
         self.share_manager = share_manager
         self.proxy_store = proxy_store
         self.vision_targeter = vision_targeter
+        self.harness_service = harness_service
         self._tools = {
             spec.name: spec
             for spec in [
@@ -348,6 +359,63 @@ class McpToolGateway:
                     description="List configured model providers for browser-agent orchestration.",
                     input_model=EmptyInput,
                     handler=self._list_providers,
+                    profiles=("full",),
+                ),
+                # ── Convergence Harness ───────────────────────────────────
+                ToolSpec(
+                    name="harness.start_convergence",
+                    description=(
+                        "Start an Agent Skill Induction convergence run from a task contract. "
+                        "Converged runs emit staged skill candidates only; promotion remains governed."
+                    ),
+                    input_model=HarnessStartConvergenceInput,
+                    handler=self._harness_start_convergence,
+                    profiles=("full",),
+                    governed_kind="write",
+                ),
+                ToolSpec(
+                    name="harness.get_status",
+                    description="Read one convergence run record and current status.",
+                    input_model=HarnessGetStatusInput,
+                    handler=self._harness_get_status,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="harness.get_trace",
+                    description="Read the latest or selected trace for one convergence run.",
+                    input_model=HarnessGetTraceInput,
+                    handler=self._harness_get_trace,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="harness.list_runs",
+                    description="List recent convergence harness runs.",
+                    input_model=HarnessListRunsInput,
+                    handler=self._harness_list_runs,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="harness.list_candidates",
+                    description="List staged skill candidates emitted by converged harness runs.",
+                    input_model=EmptyInput,
+                    handler=self._harness_list_candidates,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="harness.get_candidate",
+                    description="Read one staged skill candidate by skill ID.",
+                    input_model=HarnessSkillIdInput,
+                    handler=self._harness_get_candidate,
+                    profiles=("full",),
+                ),
+                ToolSpec(
+                    name="harness.graduate",
+                    description=(
+                        "Return the staged candidate for a converged run. "
+                        "This does not promote it into production skills."
+                    ),
+                    input_model=HarnessGraduateInput,
+                    handler=self._harness_graduate,
                     profiles=("full",),
                 ),
                 ToolSpec(
@@ -658,6 +726,21 @@ class McpToolGateway:
             raw_arguments = dict(payload.arguments or {})
             policy_profile = self._pop_policy_profile(spec, raw_arguments)
             policy_approval_id = self._pop_policy_approval_id(spec, raw_arguments)
+            if spec.name == "browser.eval_js" and policy_profile != "governed":
+                return self._error_response("browser.eval_js requires workflow_profile=governed")
+            if (
+                spec.name == "harness.start_convergence"
+                and raw_arguments.get("session_id")
+                and raw_arguments.get("mock_final_observation") is None
+                and policy_profile != "governed"
+            ):
+                return self._error_response(
+                    "harness.start_convergence with a live session requires workflow_profile=governed"
+                )
+            if spec.name.startswith("harness.") and self.harness_service is None:
+                return self._error_response(
+                    "harness service unavailable - check controller startup logs and HARNESS_* config"
+                )
             arguments = spec.input_model.model_validate(raw_arguments)
             approval = await self._require_governed_tool_approval(
                 spec,
@@ -688,6 +771,7 @@ class McpToolGateway:
                 isError=True,
             )
         except Exception:
+            logger.exception("tool %s failed", payload.name)
             return self._error_response("Tool execution failed")
 
     @staticmethod
@@ -886,6 +970,42 @@ class McpToolGateway:
 
     async def _list_providers(self, _: EmptyInput) -> list[dict[str, Any]]:
         return [item.model_dump() for item in self.orchestrator.list_providers()]
+
+    def _get_harness_service(self):
+        if self.harness_service is not None:
+            return self.harness_service
+        raise RuntimeError("Harness service is not initialized")
+
+    async def _harness_start_convergence(self, payload: HarnessStartConvergenceInput) -> dict[str, Any]:
+        service = self._get_harness_service()
+        use_live_session = payload.session_id is not None and payload.mock_final_observation is None
+        record = await service.start_convergence(
+            payload.contract,
+            mock_final_observation=payload.mock_final_observation,
+            orchestrator=self.orchestrator if use_live_session else None,
+            session_id=payload.session_id,
+            provider=payload.provider,
+            max_attempts=payload.max_attempts,
+        )
+        return record.model_dump(mode="json")
+
+    async def _harness_get_status(self, payload: HarnessGetStatusInput) -> dict[str, Any]:
+        return self._get_harness_service().get_status(payload.run_id)
+
+    async def _harness_get_trace(self, payload: HarnessGetTraceInput) -> dict[str, Any]:
+        return self._get_harness_service().get_trace(payload.run_id, attempt_index=payload.attempt_index)
+
+    async def _harness_list_runs(self, payload: HarnessListRunsInput) -> list[dict[str, Any]]:
+        return self._get_harness_service().list_runs(status=payload.status, limit=payload.limit)
+
+    async def _harness_list_candidates(self, _: EmptyInput) -> list[dict[str, Any]]:
+        return self._get_harness_service().list_candidates()
+
+    async def _harness_get_candidate(self, payload: HarnessSkillIdInput) -> dict[str, Any]:
+        return self._get_harness_service().get_candidate(payload.skill_id)
+
+    async def _harness_graduate(self, payload: HarnessGraduateInput) -> dict[str, Any]:
+        return self._get_harness_service().graduate(payload.run_id)
 
     async def _get_remote_access(self, payload: GetRemoteAccessInput) -> dict[str, Any]:
         if payload.session_id and payload.session_id not in self.manager.sessions:
