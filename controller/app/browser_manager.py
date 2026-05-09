@@ -32,6 +32,7 @@ from .approvals import ApprovalRequiredError, ApprovalStore
 from .artifacts import SessionArtifactService
 from .audit import AuditStore, get_current_operator
 from .auth_state import AuthStateManager
+from .browser.services import BrowserTabService
 from .browser_scripts import (
     ACTIVE_ELEMENT_SCRIPT,
     INTERACTABLES_SCRIPT,
@@ -130,6 +131,7 @@ class BrowserManager:
         self.sessions: dict[str, BrowserSession] = {}
         self._browser_lock = asyncio.Lock()
         self.action_pipeline = BrowserActionPipeline()
+        self.tabs = BrowserTabService(self)
 
         Path(self.settings.artifact_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.upload_root).mkdir(parents=True, exist_ok=True)
@@ -1372,75 +1374,16 @@ class BrowserManager:
         return await self._run_action(session, "go_forward", {}, operation)
 
     async def list_tabs(self, session_id: str) -> list[dict[str, Any]]:
-        session = await self.get_session(session_id)
-        async with session.lock:
-            return await self._tab_summaries(session)
+        return await self.tabs.list(session_id)
 
     async def open_tab(self, session_id: str, url: str | None, activate: bool) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        async with session.lock:
-            new_page = await session.context.new_page()
-            self._attach_page_listeners(new_page, session)
-            if url:
-                await new_page.goto(url, wait_until="domcontentloaded")
-                await self._settle(new_page)
-            if activate:
-                session.page = new_page
-                if hasattr(new_page, "bring_to_front"):
-                    await new_page.bring_to_front()
-            pages = self._tab_pages(session)
-            new_index = pages.index(new_page) if new_page in pages else len(pages) - 1
-            await self._persist_session(session, status="active")
-            return {
-                "index": new_index,
-                "activated": activate,
-                "session": await self._session_summary(session),
-                "tabs": await self._tab_summaries(session),
-            }
+        return await self.tabs.open(session_id, url, activate)
 
     async def activate_tab(self, session_id: str, index: int) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        async with session.lock:
-            pages = self._tab_pages(session)
-            if index < 0 or index >= len(pages):
-                raise ValueError(f"Unknown tab index: {index}")
-            target_page = pages[index]
-            self._attach_page_listeners(target_page, session)
-            if hasattr(target_page, "bring_to_front"):
-                await target_page.bring_to_front()
-            session.page = target_page
-            await self._settle(session.page)
-            await self._persist_session(session, status="active")
-            return {
-                "index": index,
-                "session": await self._session_summary(session),
-                "tabs": await self._tab_summaries(session),
-            }
+        return await self.tabs.activate(session_id, index)
 
     async def close_tab(self, session_id: str, index: int) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        async with session.lock:
-            pages = self._tab_pages(session)
-            if index < 0 or index >= len(pages):
-                raise ValueError(f"Unknown tab index: {index}")
-            if len(pages) == 1:
-                raise ValueError("Cannot close the only open tab in a session")
-            target_page = pages[index]
-            was_active = target_page is session.page
-            await target_page.close()
-            remaining = self._tab_pages(session)
-            if was_active and remaining:
-                session.page = remaining[max(0, min(index, len(remaining) - 1))]
-                self._attach_page_listeners(session.page, session)
-                if hasattr(session.page, "bring_to_front"):
-                    await session.page.bring_to_front()
-                await self._settle(session.page)
-            await self._persist_session(session, status="active")
-            return {
-                "closed_index": index,
-                "session": await self._session_summary(session),
-                "tabs": await self._tab_summaries(session),
-            }
+        return await self.tabs.close(session_id, index)
 
     async def list_downloads(self, session_id: str) -> list[dict[str, Any]]:
         session = self.sessions.get(session_id)
@@ -2764,30 +2707,10 @@ class BrowserManager:
         await self.session_store.upsert(SessionRecord.model_validate(summary))
 
     def _tab_pages(self, session: BrowserSession) -> list[Page]:
-        pages = getattr(session.context, "pages", None)
-        if callable(pages):
-            pages = pages()
-        if isinstance(pages, list) and pages:
-            return pages
-        return [session.page]
+        return self.tabs.pages(session)
 
     async def _tab_summaries(self, session: BrowserSession) -> list[dict[str, Any]]:
-        tabs: list[dict[str, Any]] = []
-        for index, page in enumerate(self._tab_pages(session)):
-            self._attach_page_listeners(page, session)
-            try:
-                title = await page.title()
-            except Exception:
-                title = ""
-            tabs.append(
-                {
-                    "index": index,
-                    "active": page is session.page,
-                    "url": getattr(page, "url", ""),
-                    "title": title,
-                }
-            )
-        return tabs
+        return await self.tabs.summaries(session)
 
     async def _settle(self, page: Page) -> None:
         try:
