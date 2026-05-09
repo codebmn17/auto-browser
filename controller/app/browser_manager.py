@@ -33,15 +33,11 @@ from .auth_state import AuthStateManager
 from .browser.services import (
     BrowserAuthProfileService,
     BrowserDiagnosticsService,
+    BrowserObservationService,
     BrowserTabService,
     BrowserUploadService,
 )
-from .browser_scripts import (
-    ACTIVE_ELEMENT_SCRIPT,
-    INTERACTABLES_SCRIPT,
-    PAGE_SUMMARY_SCRIPT,
-    apply_stealth,
-)
+from .browser_scripts import apply_stealth
 from .config import Settings
 from .downloads import DownloadCaptureService
 from .memory_manager import MemoryManager
@@ -72,8 +68,6 @@ from .witness import (
 )
 
 logger = logging.getLogger(__name__)
-
-ACCESSIBILITY_NODE_LIMIT = 30
 
 __all__ = ["BrowserManager", "BrowserSession", "PlaywrightError"]
 
@@ -137,6 +131,7 @@ class BrowserManager:
         self.auth_profiles = BrowserAuthProfileService(self)
         self.tabs = BrowserTabService(self)
         self.uploads = BrowserUploadService(self)
+        self.observation = BrowserObservationService(self)
 
         Path(self.settings.artifact_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.upload_root).mkdir(parents=True, exist_ok=True)
@@ -932,28 +927,10 @@ class BrowserManager:
         }
 
     async def observe(self, session_id: str, limit: int = 40, preset: str = "normal") -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        async with session.lock:
-            result = await self._observation_payload(session, limit=limit, preset=preset)
-            _events.emit_observe(
-                session_id,
-                result.get("url", ""),
-                result.get("title", ""),
-                result.get("screenshot_url"),
-            )
-            return result
+        return await self.observation.observe(session_id, limit=limit, preset=preset)
 
     async def capture_screenshot(self, session_id: str, *, label: str = "manual") -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        async with session.lock:
-            screenshot = await self._capture_screenshot(session, label)
-            return {
-                "session": await self._session_summary(session),
-                "url": session.page.url,
-                "screenshot_path": screenshot["path"],
-                "screenshot_url": screenshot["url"],
-                "takeover_url": self._current_takeover_url(session),
-            }
+        return await self.observation.capture_screenshot(session_id, label=label)
 
     async def get_console_messages(self, session_id: str, *, limit: int = 20) -> dict[str, Any]:
         return await self.diagnostics.get_console_messages(session_id, limit=limit)
@@ -1110,13 +1087,7 @@ class BrowserManager:
         return await self.diagnostics.get_request_failures(session_id, limit=limit)
 
     async def stop_trace(self, session_id: str) -> dict[str, Any]:
-        session = await self.get_session(session_id)
-        async with session.lock:
-            await self._stop_trace_recording(session)
-            return {
-                "session": await self._session_summary(session),
-                **self._trace_payload(session),
-            }
+        return await self.observation.stop_trace(session_id)
 
     async def navigate(self, session_id: str, url: str) -> dict[str, Any]:
         self._assert_url_allowed(url)
@@ -1931,203 +1902,30 @@ class BrowserManager:
         screenshot_label: str = "observe",
         preset: str = "normal",
     ) -> dict[str, Any]:
-        screenshot = await self._capture_screenshot(session, screenshot_label)
-
-        # fast preset: screenshot only — skip OCR and accessibility tree
-        if preset == "fast":
-            title = await session.page.title()
-            tabs = await self._tab_summaries(session)
-            return {
-                "session": await self._session_summary(session),
-                "url": session.page.url,
-                "title": title,
-                "active_element": None,
-                "text_excerpt": "",
-                "dom_outline": {},
-                "accessibility_outline": {"available": False, "nodes": []},
-                "ocr": None,
-                "interactables": [],
-                "screenshot_path": screenshot["path"],
-                "screenshot_url": screenshot["url"],
-                "console_messages": session.console_messages[-10:],
-                "page_errors": session.page_errors[-10:],
-                "request_failures": [],
-                "tabs": tabs,
-                "recent_downloads": session.downloads[-10:],
-                "takeover_url": self._current_takeover_url(session),
-                "remote_access": self._session_remote_access_info(session),
-                "preset": "fast",
-            }
-
-        # normal and rich share the same path; rich uses a larger text/interactable limit
-        effective_limit = min(limit * 2, 200) if preset == "rich" else limit
-        interactables = await session.page.evaluate(INTERACTABLES_SCRIPT, effective_limit)
-        text_limit = 4000 if preset == "rich" else 2000
-        summary = await self._page_summary(session.page, text_limit=text_limit)
-        ocr = await self.ocr.extract_from_image(screenshot["path"])
-        # Apply PII pixel-redaction on the already-captured screenshot in-place
-        if self.pii_scrubber.screenshot_enabled and ocr and ocr.get("blocks"):
-            try:
-                scrubbed_path = Path(screenshot["path"])
-                raw_bytes = scrubbed_path.read_bytes()
-                scrubbed_bytes, hits = self.pii_scrubber.screenshot(raw_bytes, ocr["blocks"])
-                if hits:
-                    scrubbed_path.write_bytes(scrubbed_bytes)
-                    if self.pii_scrubber.audit_report:
-                        await self.audit.append(
-                            event_type="pii_redaction",
-                            status="ok",
-                            action="screenshot_scrub",
-                            session_id=session.id,
-                            details=self.pii_scrubber.build_audit_report(
-                                session.id, "screenshot", hits
-                            ),
-                        )
-            except Exception as exc:
-                logger.warning("screenshot PII redaction error for session %s: %s", session.id, exc)
-        tabs = await self._tab_summaries(session)
-        return {
-            "session": await self._session_summary(session),
-            "url": session.page.url,
-            "title": summary["title"],
-            "active_element": summary["active_element"],
-            "text_excerpt": summary["text_excerpt"],
-            "dom_outline": summary["dom_outline"],
-            "accessibility_outline": summary["accessibility_outline"],
-            "ocr": ocr,
-            "interactables": interactables,
-            "screenshot_path": screenshot["path"],
-            "screenshot_url": screenshot["url"],
-            "console_messages": session.console_messages[-10:],
-            "page_errors": session.page_errors[-10:],
-            "request_failures": session.request_failures[-10:],
-            "tabs": tabs,
-            "recent_downloads": session.downloads[-10:],
-            "takeover_url": self._current_takeover_url(session),
-            "remote_access": self._session_remote_access_info(session),
-            "preset": preset,
-        }
+        return await self.observation.observation_payload(
+            session,
+            limit=limit,
+            screenshot_label=screenshot_label,
+            preset=preset,
+        )
 
     async def _light_snapshot(self, session: BrowserSession, *, label: str) -> dict[str, Any]:
-        screenshot = await self._capture_screenshot(session, label)
-        summary = await self._page_summary(session.page)
-        return {
-            "url": session.page.url,
-            "title": summary["title"],
-            "active_element": summary["active_element"],
-            "text_excerpt": summary["text_excerpt"],
-            "dom_outline": summary["dom_outline"],
-            "accessibility_outline": summary["accessibility_outline"],
-            "screenshot_path": screenshot["path"],
-            "screenshot_url": screenshot["url"],
-        }
+        return await self.observation.light_snapshot(session, label=label)
 
     async def _capture_screenshot(self, session: BrowserSession, label: str) -> dict[str, str]:
-        return await self.artifacts.capture_screenshot(session, label)
+        return await self.observation.capture_session_screenshot(session, label)
 
     def _trace_payload(self, session: BrowserSession) -> dict[str, Any]:
-        return self.artifacts.trace_payload(session)
+        return self.observation.trace_payload(session)
 
     async def _stop_trace_recording(self, session: BrowserSession) -> None:
-        if not self.settings.enable_tracing or not session.trace_recording:
-            session.trace_recording = False
-            return
-        try:
-            await session.context.tracing.stop(path=str(session.trace_path))
-            session.trace_recording = False
-        except Exception as exc:  # pragma: no cover - depends on external browser support
-            logger.warning("failed to stop tracing for session %s: %s", session.id, exc)
+        await self.observation.stop_trace_recording(session)
 
     async def _page_summary(self, page: Page, text_limit: int = 2000) -> dict[str, Any]:
-        summary = await page.evaluate(PAGE_SUMMARY_SCRIPT, text_limit)
-        accessibility_outline = await self._accessibility_outline(page)
-        return {
-            "title": await page.title(),
-            "active_element": await page.evaluate(ACTIVE_ELEMENT_SCRIPT),
-            "text_excerpt": summary.get("text_excerpt", ""),
-            "dom_outline": summary.get("dom_outline", {}),
-            "accessibility_outline": accessibility_outline,
-        }
+        return await self.observation.page_summary(page, text_limit=text_limit)
 
     async def _accessibility_outline(self, page: Page) -> dict[str, Any]:
-        accessibility = getattr(page, "accessibility", None)
-        if accessibility is None or not hasattr(accessibility, "snapshot"):
-            return {
-                "available": False,
-                "root_role": None,
-                "root_name": None,
-                "focused": None,
-                "role_counts": {},
-                "nodes": [],
-            }
-
-        try:
-            snapshot = await accessibility.snapshot(interesting_only=True)
-        except Exception as exc:
-            logger.debug("failed to capture accessibility snapshot: %s", exc)
-            return {
-                "available": False,
-                "root_role": None,
-                "root_name": None,
-                "focused": None,
-                "role_counts": {},
-                "nodes": [],
-                "error": "accessibility_snapshot_unavailable",
-            }
-
-        if not snapshot:
-            return {
-                "available": True,
-                "root_role": None,
-                "root_name": None,
-                "focused": None,
-                "role_counts": {},
-                "nodes": [],
-            }
-
-        nodes: list[dict[str, Any]] = []
-        role_counts: dict[str, int] = {}
-        focused: dict[str, Any] | None = None
-
-        def walk(node: dict[str, Any], depth: int) -> None:
-            nonlocal focused
-            if len(nodes) >= ACCESSIBILITY_NODE_LIMIT:
-                return
-            role = node.get("role")
-            if isinstance(role, str) and role:
-                role_counts[role] = role_counts.get(role, 0) + 1
-            compact = {
-                "role": role,
-                "name": node.get("name"),
-                "value": node.get("valueString") or node.get("value"),
-                "description": node.get("description"),
-                "focused": bool(node.get("focused")),
-                "disabled": bool(node.get("disabled")),
-                "selected": bool(node.get("selected")),
-                "checked": node.get("checked"),
-                "expanded": node.get("expanded"),
-                "pressed": node.get("pressed"),
-                "depth": depth,
-            }
-            nodes.append(compact)
-            if compact["focused"] and focused is None:
-                focused = compact
-            for child in node.get("children") or []:
-                if not isinstance(child, dict):
-                    continue
-                walk(child, depth + 1)
-                if len(nodes) >= ACCESSIBILITY_NODE_LIMIT:
-                    return
-
-        walk(snapshot, 0)
-        return {
-            "available": True,
-            "root_role": snapshot.get("role"),
-            "root_name": snapshot.get("name"),
-            "focused": focused,
-            "role_counts": role_counts,
-            "nodes": nodes,
-        }
+        return await self.observation.accessibility_outline(page)
 
     def _session_auth_state_info(self, session: BrowserSession) -> dict[str, Any]:
         info = self.auth_state.inspect(session.last_auth_state_path)
