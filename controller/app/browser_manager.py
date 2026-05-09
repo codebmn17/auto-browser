@@ -22,6 +22,7 @@ from .auth_state import AuthStateManager
 from .browser.services import (
     BrowserActionService,
     BrowserAuthProfileService,
+    BrowserBotChallengeService,
     BrowserDiagnosticsService,
     BrowserObservationService,
     BrowserRemoteAccessService,
@@ -120,6 +121,7 @@ class BrowserManager:
         self.action_pipeline = BrowserActionPipeline()
         self.actions = BrowserActionService(self)
         self.auth_profiles = BrowserAuthProfileService(self)
+        self.bot_challenge = BrowserBotChallengeService()
         self.tabs = BrowserTabService(self)
         self.uploads = BrowserUploadService(self)
         self.observation = BrowserObservationService(self)
@@ -1015,55 +1017,8 @@ class BrowserManager:
         return await self.actions.run_action(session, action_name, target, operation)
 
 
-    # Known bot challenge URL patterns and page signals
-    _BOT_CHALLENGE_SIGNALS = [
-        "challenge.cloudflare.com",
-        "challenges.cloudflare.com",
-        "/cdn-cgi/challenge-platform/",
-        "captcha",
-        "recaptcha",
-        "hcaptcha",
-        "arkose",
-        "unusual activity",
-        "suspicious activity",
-        "verify you're human",
-        "verify you are human",
-        "security check",
-        "access denied",
-        "bot detected",
-    ]
-
     async def _check_bot_challenge(self, session: BrowserSession) -> dict[str, Any] | None:
-        """Return a takeover payload if a bot challenge is detected, else None."""
-        url = session.page.url.lower()
-        title = ""
-        body_text = ""
-        iframe_sources: list[str] = []
-        try:
-            title = (await session.page.title()).lower()
-            body_text = (await session.page.evaluate("() => document.body?.innerText?.slice(0, 500) || ''")).lower()
-            iframe_sources = [
-                item.lower()
-                for item in (
-                    await session.page.evaluate(
-                        "() => Array.from(document.querySelectorAll('iframe')).map((el) => el.src || el.getAttribute('src') || '')"
-                    )
-                )
-            ]
-        except Exception:
-            pass
-
-        combined = f"{url} {title} {body_text} {' '.join(iframe_sources)}"
-        for signal in self._BOT_CHALLENGE_SIGNALS:
-            if signal in combined:
-                return {
-                    "bot_challenge_detected": True,
-                    "signal": signal,
-                    "url": session.page.url,
-                    "title": title,
-                    "iframes": iframe_sources[:10],
-                }
-        return None
+        return await self.bot_challenge.check(session)
 
     async def _observation_payload(
         self,

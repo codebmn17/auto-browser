@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .actions import BrowserActionService
 from .auth_profiles import BrowserAuthProfileService
+from .bot_challenge import BrowserBotChallengeService
 from .diagnostics import BrowserDiagnosticsService
 from .observation import BrowserObservationService
 from .remote_access import BrowserRemoteAccessService
@@ -13,6 +14,7 @@ from .witness import BrowserWitnessService
 __all__ = [
     "BrowserActionService",
     "BrowserAuthProfileService",
+    "BrowserBotChallengeService",
     "BrowserDiagnosticsService",
     "BrowserObservationService",
     "BrowserRemoteAccessService",
