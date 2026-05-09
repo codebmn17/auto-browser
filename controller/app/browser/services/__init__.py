@@ -4,6 +4,7 @@ from .actions import BrowserActionService
 from .auth_profiles import BrowserAuthProfileService
 from .diagnostics import BrowserDiagnosticsService
 from .observation import BrowserObservationService
+from .sessions import BrowserSessionService
 from .tabs import BrowserTabService
 from .uploads import BrowserUploadService
 
@@ -12,6 +13,7 @@ __all__ = [
     "BrowserAuthProfileService",
     "BrowserDiagnosticsService",
     "BrowserObservationService",
+    "BrowserSessionService",
     "BrowserTabService",
     "BrowserUploadService",
 ]
