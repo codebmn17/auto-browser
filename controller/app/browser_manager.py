@@ -27,6 +27,7 @@ except Exception:  # pragma: no cover - graceful fallback for non-login test run
 
 from . import events as _events
 from .action_errors import BrowserActionError
+from .actions import ActionRunContext, BrowserActionPipeline
 from .approvals import ApprovalRequiredError, ApprovalStore
 from .artifacts import SessionArtifactService
 from .audit import AuditStore, get_current_operator
@@ -69,6 +70,8 @@ from .witness import (
 logger = logging.getLogger(__name__)
 
 ACCESSIBILITY_NODE_LIMIT = 30
+
+__all__ = ["BrowserManager", "BrowserSession", "PlaywrightError"]
 
 
 @dataclass
@@ -126,6 +129,7 @@ class BrowserManager:
         self.browser: Browser | None = None
         self.sessions: dict[str, BrowserSession] = {}
         self._browser_lock = asyncio.Lock()
+        self.action_pipeline = BrowserActionPipeline()
 
         Path(self.settings.artifact_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.upload_root).mkdir(parents=True, exist_ok=True)
@@ -2147,251 +2151,15 @@ class BrowserManager:
         target: dict[str, Any],
         operation,
     ) -> dict[str, Any]:
-        async with session.lock:
-            witness_context = self._consume_witness_context(session)
-            action_class = self._witness_action_class(
-                action_name,
-                risk_category=witness_context.get("risk_category"),
-            )
-            witness_outcome = self.witness_policy.evaluate_action(
-                session=self._witness_session_context(session),
-                action=self._build_witness_action_context(
-                    action_name=action_name,
-                    target=target,
-                    witness_context=witness_context,
-                ),
-            )
-            before = await self._light_snapshot(session, label=f"before-{action_name}")
-            try:
-                if action_class != "read":
-                    await self._ensure_witness_remote_ready(session, action=action_name)
-                if witness_outcome.should_block:
-                    raise PermissionError(witness_outcome.block_reason or "Witness policy blocked this action")
-                await operation()
-                totp_result = await self._maybe_handle_totp(session)
-                if totp_result is not None:
-                    target.setdefault("totp", totp_result)
-                self._assert_runtime_url_allowed(session.page.url)
-                challenge = await self._check_bot_challenge(session)
-                if challenge is not None:
-                    await self.request_human_takeover(session.id, reason=f"Bot challenge detected: {challenge['signal']}")
-                    raise BrowserActionError(
-                        f"Bot challenge detected: {challenge['signal']}",
-                        action=action_name,
-                        code="captcha_detected",
-                        retryable=False,
-                        details=challenge,
-                    )
-            except PermissionError as exc:
-                error_message = "Action blocked by policy"
-                try:
-                    if session.page.url != before.get("url"):
-                        await session.page.go_back(wait_until="domcontentloaded")
-                        await self._settle(session.page)
-                except Exception:
-                    pass
-                failed = await self._light_snapshot(session, label=f"blocked-{action_name}")
-                await self._append_jsonl(
-                    session.artifact_dir / "actions.jsonl",
-                    {
-                        "timestamp": utc_now(),
-                        "action": action_name,
-                        "status": "blocked",
-                        "target": target,
-                        "before": before,
-                        "after": failed,
-                        "error": error_message,
-                    },
-                )
-                await self.audit.append(
-                    event_type="browser_action",
-                    status="blocked",
-                    action=action_name,
-                    session_id=session.id,
-                    details={"target": target, "error": error_message},
-                )
-                await self._record_witness_receipt(
-                    session,
-                    event_type="browser_action",
-                    status="blocked",
-                    action=action_name,
-                    action_class=action_class,
-                    risk_category=witness_context.get("risk_category"),
-                    target=target,
-                    outcome=witness_outcome,
-                    before=before,
-                    after=failed,
-                    approval=WitnessApproval(
-                        required=bool(
-                            witness_outcome.require_approval
-                            or witness_context.get("approval_id")
-                            or target.get("approval_id")
-                        ),
-                        approval_id=witness_context.get("approval_id") or target.get("approval_id"),
-                        status="blocked",
-                    ),
-                    metadata={"error": error_message},
-                )
-                raise BrowserActionError(
-                    error_message,
-                    code="browser_action_blocked",
-                    action=action_name,
-                    status_code=403,
-                    retryable=False,
-                    url=session.page.url,
-                    details={"snapshot": failed},
-                ) from exc
-            except BrowserActionError as exc:
-                failed = await self._light_snapshot(session, label=f"failed-{action_name}")
-                await self._append_jsonl(
-                    session.artifact_dir / "actions.jsonl",
-                    {
-                        "timestamp": utc_now(),
-                        "action": action_name,
-                        "status": "failed",
-                        "target": target,
-                        "before": before,
-                        "after": failed,
-                        "error": exc.payload,
-                    },
-                )
-                await self.audit.append(
-                    event_type="browser_action",
-                    status="failed",
-                    action=action_name,
-                    session_id=session.id,
-                    details={"target": target, "error": exc.payload},
-                )
-                await self._record_witness_receipt(
-                    session,
-                    event_type="browser_action",
-                    status="failed",
-                    action=action_name,
-                    action_class=action_class,
-                    risk_category=witness_context.get("risk_category"),
-                    target=target,
-                    outcome=witness_outcome,
-                    before=before,
-                    after=failed,
-                    approval=WitnessApproval(
-                        required=bool(
-                            witness_outcome.require_approval
-                            or witness_context.get("approval_id")
-                            or target.get("approval_id")
-                        ),
-                        approval_id=witness_context.get("approval_id") or target.get("approval_id"),
-                        status="failed",
-                    ),
-                    metadata={"error": exc.payload},
-                )
-                exc.details.setdefault("snapshot", failed)
-                raise
-            except PlaywrightError as exc:
-                error_message = "Action failed. Refresh observation and retry."
-                failed = await self._light_snapshot(session, label=f"failed-{action_name}")
-                await self._append_jsonl(
-                    session.artifact_dir / "actions.jsonl",
-                    {
-                        "timestamp": utc_now(),
-                        "action": action_name,
-                        "status": "failed",
-                        "target": target,
-                        "before": before,
-                        "after": failed,
-                        "error": error_message,
-                    },
-                )
-                await self.audit.append(
-                    event_type="browser_action",
-                    status="failed",
-                    action=action_name,
-                    session_id=session.id,
-                    details={"target": target, "error": error_message},
-                )
-                await self._record_witness_receipt(
-                    session,
-                    event_type="browser_action",
-                    status="failed",
-                    action=action_name,
-                    action_class=action_class,
-                    risk_category=witness_context.get("risk_category"),
-                    target=target,
-                    outcome=witness_outcome,
-                    before=before,
-                    after=failed,
-                    approval=WitnessApproval(
-                        required=bool(
-                            witness_outcome.require_approval
-                            or witness_context.get("approval_id")
-                            or target.get("approval_id")
-                        ),
-                        approval_id=witness_context.get("approval_id") or target.get("approval_id"),
-                        status="failed",
-                    ),
-                    metadata={"error": error_message},
-                )
-                raise BrowserActionError(
-                    error_message,
-                    code="browser_action_failed",
-                    action=action_name,
-                    status_code=400,
-                    retryable=True,
-                    url=session.page.url,
-                    details={"snapshot": failed},
-                ) from exc
-            after = await self._observation_payload(session, limit=20, screenshot_label=f"after-{action_name}")
-            session.last_action = action_name
-            verification = self._action_verification(action_name, target, before, after)
-            payload = {
-                "timestamp": utc_now(),
-                "action": action_name,
-                "action_class": self._action_class(action_name),
-                "target": target,
-                "before": before,
-                "after": after,
-                "verification": verification,
-            }
-            await self._append_jsonl(session.artifact_dir / "actions.jsonl", payload)
-            await self.audit.append(
-                event_type="browser_action",
-                status="ok",
-                action=action_name,
-                session_id=session.id,
-                details={"target": target, "verification": verification},
-            )
-            await self._record_witness_receipt(
-                session,
-                event_type="browser_action",
-                status="ok",
-                action=action_name,
-                action_class=action_class,
-                risk_category=witness_context.get("risk_category"),
+        return await self.action_pipeline.run(
+            ActionRunContext(
+                manager=self,
+                session=session,
+                action_name=action_name,
                 target=target,
-                outcome=witness_outcome,
-                before=before,
-                after=after,
-                verification=verification,
-                approval=WitnessApproval(
-                    required=bool(
-                        witness_outcome.require_approval
-                        or witness_context.get("approval_id")
-                        or target.get("approval_id")
-                    ),
-                    approval_id=witness_context.get("approval_id") or target.get("approval_id"),
-                    status="executed" if (witness_context.get("approval_id") or target.get("approval_id")) else None,
-                ),
+                operation=operation,
             )
-            await self._persist_session(session, status="active")
-            _events.emit_action(session.id, action_name, "ok", {"url": session.page.url})
-            return {
-                "action": action_name,
-                "action_class": self._action_class(action_name),
-                "session": await self._session_summary(session),
-                "before": before,
-                "after": after,
-                "target": target,
-                "verification": verification,
-            }
+        )
 
 
     # Known bot challenge URL patterns and page signals
