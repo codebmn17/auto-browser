@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sqlite3
 import time
 import uuid
@@ -10,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from ..sqlite_utils import connect_sqlite
 
 _SENSITIVE_KEY_FRAGMENTS = (
     "authorization",
@@ -256,11 +257,7 @@ class TraceRecorder:
             conn.close()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10)
-        if os.name != "nt":
-            conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
+        return connect_sqlite(self.db_path, timeout=10)
 
 
 def _redact_sensitive(value: Any) -> Any:
