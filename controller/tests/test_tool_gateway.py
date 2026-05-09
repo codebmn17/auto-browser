@@ -9,7 +9,8 @@ from app.action_errors import BrowserActionError
 from app.approvals import ApprovalRequiredError
 from app.memory_manager import MemoryProfile
 from app.models import ApprovalRecord, BrowserActionDecision, McpToolCallRequest, ProviderInfo
-from app.tool_gateway import McpToolGateway
+from app.tool_gateway import CreateSessionRequest, McpToolGateway, ToolRegistry, ToolSpec
+from app.tool_inputs import EmptyInput
 
 
 class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
@@ -168,6 +169,89 @@ class ToolGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(names), len(tools))
         self.assertNotIn("browser.discard_agent_job", names)
         self.assertNotIn("browser.cancel_agent_job", names)
+
+    async def test_list_tools_include_mcp_hints(self) -> None:
+        tools = {tool["name"]: tool for tool in self.gateway.list_tools()}
+        console_hints = tools["browser.get_console"]["annotations"]
+        action_hints = tools["browser.execute_action"]["annotations"]
+
+        self.assertEqual(
+            console_hints,
+            {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": True,
+            },
+        )
+        self.assertEqual(
+            action_hints,
+            {
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": False,
+                "openWorldHint": True,
+            },
+        )
+
+    async def test_full_profile_tool_hints_classify_destructive_and_closed_domain_tools(self) -> None:
+        tools = {tool["name"]: tool for tool in self.full_gateway.list_tools()}
+
+        self.assertEqual(
+            tools["browser.close_session"]["annotations"],
+            {
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": False,
+                "openWorldHint": False,
+            },
+        )
+        self.assertEqual(
+            tools["harness.list_runs"]["annotations"],
+            {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        )
+
+    async def test_tool_gateway_package_reexports_legacy_input_models(self) -> None:
+        payload = CreateSessionRequest(name="reexport-check")
+
+        self.assertEqual(payload.name, "reexport-check")
+
+    async def test_tool_registry_descriptor_cache_invalidates_and_returns_copies(self) -> None:
+        registry = ToolRegistry(tool_profile="curated", experimental_enabled=lambda _: True)
+
+        async def handler(_: EmptyInput):
+            return {}
+
+        registry.register(
+            ToolSpec(
+                name="test.one",
+                description="First tool.",
+                input_model=EmptyInput,
+                handler=handler,
+                read_only_hint=True,
+                idempotent_hint=True,
+            )
+        )
+        first = registry.list_tools()
+        first[0]["annotations"]["readOnlyHint"] = False
+
+        self.assertTrue(registry.list_tools()[0]["annotations"]["readOnlyHint"])
+
+        registry.register(
+            ToolSpec(
+                name="test.two",
+                description="Second tool.",
+                input_model=EmptyInput,
+                handler=handler,
+            )
+        )
+
+        self.assertEqual({tool["name"] for tool in registry.list_tools()}, {"test.one", "test.two"})
 
     async def test_full_profile_keeps_internal_tools_available(self) -> None:
         names = {tool["name"] for tool in self.full_gateway.list_tools()}

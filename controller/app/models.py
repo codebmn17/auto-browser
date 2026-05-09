@@ -546,6 +546,7 @@ class McpToolDescriptor(BaseModel):
     name: str
     description: str
     inputSchema: dict[str, Any]
+    annotations: dict[str, bool] | None = None
 
 
 class McpToolCallRequest(BaseModel):
